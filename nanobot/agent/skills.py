@@ -28,7 +28,7 @@ class SkillsLoader:
 
     def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None):
         self.workspace = workspace
-        self.workspace_skills = workspace / "skills"
+        self.workspace_skills = workspace / ".nanobot" / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
 
