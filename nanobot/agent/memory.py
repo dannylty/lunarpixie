@@ -815,12 +815,9 @@ class Dream:
         ))
         tools.register(EditFileTool(workspace=workspace, allowed_dir=workspace))
         # write_file resolves relative paths from workspace root.
-        # Allow writing anywhere in the workspace so the Dream agent can
-        # create/update memory files (MEMORY.md, SOUL.md, USER.md) as well
-        # as skills.
-        skills_dir = workspace / "skills"
+        skills_dir = workspace / ".nanobot" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
-        tools.register(WriteFileTool(workspace=workspace, allowed_dir=workspace))
+        tools.register(WriteFileTool(workspace=workspace, allowed_dir=skills_dir))
         return tools
 
     # -- skill listing --------------------------------------------------------

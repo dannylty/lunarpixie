@@ -7,7 +7,7 @@ Update memory files based on the analysis below.
 - .nanobot/SOUL.md
 - .nanobot/USER.md
 - .nanobot/memory/MEMORY.md
-- .nanobot/skills/<name>/SKILL.md (for [SKILL] entries only)
+- .nanobot/skills/<name>/SKILL.md (for [SKILL] entries only, use write_file)
 
 Do NOT guess paths.
 
@@ -20,7 +20,7 @@ Do NOT guess paths.
 - If nothing to update, stop without calling tools
 
 ## Skill creation rules (for [SKILL] entries)
-- Use write_file to create skills/<name>/SKILL.md
+- Use write_file to create .nanobot/skills/<name>/SKILL.md
 - Before writing, read_file `{{ skill_creator_path }}` for format reference (frontmatter structure, naming conventions, quality standards)
 - **Dedup check**: read existing skills listed below to verify the new skill is not functionally redundant. Skip creation if an existing skill already covers the same workflow.
 - Include YAML frontmatter with name and description fields
