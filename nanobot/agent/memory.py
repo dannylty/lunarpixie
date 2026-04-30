@@ -63,8 +63,9 @@ class MemoryStore:
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit non-int cursor warning
         self._oversize_logged = False  # rate-limit oversized-entry warning
-       self._git = GitStore(self.data_dir, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+   self._git = GitStore(self.data_dir, tracked_files=[
+            "SOUL.md", "USER.md", "TOOLS.md", "AGENT.md", "HEARTBEAT.md",
+            "memory/MEMORY.md", "memory/.dream_cursor",
         ])
         self._maybe_migrate_legacy_history()
 
@@ -72,8 +73,7 @@ class MemoryStore:
         """Move pre-unification files from ``<workspace>/`` into ``<workspace>/.nanobot/``.
 
         Handles: ``memory/`` dir, ``SOUL.md``, ``USER.md``, ``AGENTS.md``, ``TOOLS.md``,
-        ``HEARTBEAT.md``, ``skills/``, and the in-workspace ``.git`` repo used for
-        memory version control. Idempotent — a second call is a no-op.
+        ``HEARTBEAT.md``, ``skills/``. Idempotent — a second call is a no-op.
         """
         ws = self.workspace
         moves: list[tuple[Path, Path]] = []
@@ -87,20 +87,6 @@ class MemoryStore:
             new = self.data_dir / name
             if old.is_file() and not new.exists():
                 moves.append((old, new))
-        # Memory git store: <workspace>/.git → <workspace>/.nanobot/.git, but ONLY
-        # if it was created by nanobot (i.e. workspace isn't already inside another
-        # repo we shouldn't touch). The marker is the gitignore line set during init.
-        old_git = ws / ".git"
-        new_git = self.data_dir / ".git"
-        old_gitignore = ws / ".gitignore"
-        if (
-            old_git.is_dir()
-            and not new_git.exists()
-            and old_gitignore.is_file()
-            and "MEMORY.md" in old_gitignore.read_text(encoding="utf-8", errors="ignore")
-        ):
-            moves.append((old_git, new_git))
-            moves.append((old_gitignore, self.data_dir / ".gitignore"))
 
         if not moves:
             return
