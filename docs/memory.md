@@ -13,8 +13,8 @@ nanobot does not treat memory as one giant file.
 It separates memory into layers, because different kinds of remembering deserve different tools:
 
 - `session.messages` holds the living short-term conversation.
-- `memory/history.jsonl` is the running archive of compressed past turns.
-- `SOUL.md`, `USER.md`, and `memory/MEMORY.md` are the durable knowledge files.
+- `.nanobot/memory/history.jsonl` is the running archive of compressed past turns.
+- `.nanobot/SOUL.md`, `.nanobot/USER.md`, and `.nanobot/memory/MEMORY.md` are the durable knowledge files.
 - `GitStore` records how those durable files change over time.
 
 This keeps the system light in the moment, but reflective over time.
@@ -27,7 +27,7 @@ Memory moves through nanobot in two stages.
 
 When a conversation grows large enough to pressure the context window, nanobot does not try to carry every old message forever.
 
-Instead, the `Consolidator` summarizes the oldest safe slice of the conversation and appends that summary to `memory/history.jsonl`.
+Instead, the `Consolidator` summarizes the oldest safe slice of the conversation and appends that summary to `.nanobot/memory/history.jsonl`.
 
 This file is:
 
@@ -49,10 +49,10 @@ It is not the final memory. It is the material from which final memory is shaped
 
 Dream reads:
 
-- new entries from `memory/history.jsonl`
-- the current `SOUL.md`
-- the current `USER.md`
-- the current `memory/MEMORY.md`
+- new entries from `.nanobot/memory/history.jsonl`
+- the current `.nanobot/SOUL.md`
+- the current `.nanobot/USER.md`
+- the current `.nanobot/memory/MEMORY.md`
 
 Then it works in two phases:
 
@@ -65,14 +65,15 @@ This is why nanobot's memory is not just archival. It is interpretive.
 
 ```text
 workspace/
-├── SOUL.md              # The bot's long-term voice and communication style
-├── USER.md              # Stable knowledge about the user
-└── memory/
-    ├── MEMORY.md        # Project facts, decisions, and durable context
-    ├── history.jsonl    # Append-only history summaries
-    ├── .cursor          # Consolidator write cursor
-    ├── .dream_cursor    # Dream consumption cursor
-    └── .git/            # Version history for long-term memory files
+└── .nanobot/
+    ├── SOUL.md              # The bot's long-term voice and communication style
+    ├── USER.md              # Stable knowledge about the user
+    └── memory/
+        ├── MEMORY.md        # Project facts, decisions, and durable context
+        ├── history.jsonl    # Append-only history summaries
+        ├── .cursor          # Consolidator write cursor
+        ├── .dream_cursor    # Dream consumption cursor
+        └── .git/            # Version history for long-term memory files
 ```
 
 These files play different roles:
@@ -98,13 +99,13 @@ You can still search it with familiar tools:
 
 ```bash
 # grep
-grep -i "keyword" memory/history.jsonl
+grep -i "keyword" .nanobot/memory/history.jsonl
 
 # jq
-cat memory/history.jsonl | jq -r 'select(.content | test("keyword"; "i")) | .content' | tail -20
+cat .nanobot/memory/history.jsonl | jq -r 'select(.content | test("keyword"; "i")) | .content' | tail -20
 
 # Python
-python -c "import json; [print(json.loads(l).get('content','')) for l in open('memory/history.jsonl','r',encoding='utf-8') if l.strip() and 'keyword' in l.lower()][-20:]"
+python -c "import json; [print(json.loads(l).get('content','')) for l in open('.nanobot/memory/history.jsonl','r',encoding='utf-8') if l.strip() and 'keyword' in l.lower()][-20:]"
 ```
 
 The difference is philosophical as much as technical:

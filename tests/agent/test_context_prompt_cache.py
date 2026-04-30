@@ -54,7 +54,7 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
 
     prompt = builder.build_system_prompt()
 
-    assert "memory/history.jsonl" in prompt
+    assert ".nanobot/memory/history.jsonl" in prompt
     assert "automatically managed by Dream" in prompt
     assert "do not edit directly" in prompt
     assert "memory/HISTORY.md" not in prompt
