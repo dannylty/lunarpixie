@@ -121,6 +121,9 @@ class GitStore:
     def auto_commit(self, message: str) -> str | None:
         """Stage tracked memory files and commit if there are changes.
 
+        Uses the existing git repo at <workspace>/.git — never creates a new one.
+        Only stages files listed in tracked_files (e.g. .nanobot/**).
+
         Returns the short commit SHA, or None if nothing to commit.
         """
         if not self.is_initialized():
@@ -129,14 +132,15 @@ class GitStore:
         try:
             from dulwich import porcelain
 
-            # .gitignore excludes everything except tracked files,
-            # so any staged/unstaged change must be in our files.
+            # Stage only our tracked files first
+            porcelain.add(str(self._workspace), paths=self._tracked_files)
+
+            # Check if any of our files have staged changes
             st = porcelain.status(str(self._workspace))
-            if not st.unstaged and not any(st.staged.values()):
+            if not any(st.staged.values()):
                 return None
 
             msg_bytes = message.encode("utf-8") if isinstance(message, str) else message
-            porcelain.add(str(self._workspace), paths=self._tracked_files)
             sha_bytes = porcelain.commit(
                 str(self._workspace),
                 message=msg_bytes,
