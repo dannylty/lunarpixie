@@ -489,7 +489,7 @@ def build_status_content(
 
 
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
-    """Sync bundled templates to workspace. Only creates missing files."""
+    """Sync bundled templates into ``<workspace>/.nanobot/``. Only creates missing files."""
     from importlib.resources import files as pkg_files
 
     try:
@@ -499,6 +499,9 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
     if not tpl.is_dir():
         return []
 
+    data_dir = workspace / ".nanobot"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
     added: list[str] = []
 
     def _write(src, dest: Path):
@@ -506,14 +509,17 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(src.read_text(encoding="utf-8") if src else "", encoding="utf-8")
-        added.append(str(dest.relative_to(workspace)))
+        try:
+            added.append(str(dest.relative_to(workspace)))
+        except ValueError:
+            added.append(str(dest))
 
     for item in tpl.iterdir():
         if item.name.endswith(".md") and not item.name.startswith("."):
-            _write(item, workspace / item.name)
-    _write(tpl / "memory" / "MEMORY.md", workspace / "memory" / "MEMORY.md")
-    _write(None, workspace / "memory" / "history.jsonl")
-    (workspace / "skills").mkdir(exist_ok=True)
+            _write(item, data_dir / item.name)
+    _write(tpl / "memory" / "MEMORY.md", data_dir / "memory" / "MEMORY.md")
+    _write(None, data_dir / "memory" / "history.jsonl")
+    (data_dir / "skills").mkdir(exist_ok=True)
 
     if added and not silent:
         from rich.console import Console
@@ -521,12 +527,13 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         for name in added:
             Console().print(f"  [dim]Created {name}[/dim]")
 
-    # Initialize git for memory version control
+    # Initialize git for memory version control inside the data dir, so we
+    # never init a repo at the user's actual workspace root.
     try:
         from nanobot.utils.gitstore import GitStore
 
         gs = GitStore(
-            workspace,
+            data_dir,
             tracked_files=[
                 "SOUL.md",
                 "USER.md",
@@ -535,6 +542,6 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         )
         gs.init()
     except Exception:
-        logger.exception("Failed to initialize git store for {}", workspace)
+      logger.exception("Failed to initialize git store for {}", data_dir)
 
     return added
