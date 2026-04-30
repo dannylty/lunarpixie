@@ -55,11 +55,7 @@ class MemoryStore:
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit non-int cursor warning
         self._oversize_logged = False  # rate-limit oversized-entry warning
-        self._git = GitStore(self.workspace, tracked_files=[
-            ".nanobot/SOUL.md", ".nanobot/USER.md", ".nanobot/TOOLS.md",
-            ".nanobot/AGENT.md", ".nanobot/HEARTBEAT.md",
-            ".nanobot/memory/MEMORY.md",
-        ])
+        self._git = GitStore(self.workspace, tracked_files=[".nanobot"])
         self._maybe_migrate_legacy_history()
 
     def _migrate_legacy_workspace_state(self) -> None:
