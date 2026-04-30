@@ -69,7 +69,7 @@ class TestDreamRun:
         store.append_history("User prefers dark mode")
         mock_provider.chat_with_retry.return_value = MagicMock(content="New fact")
         mock_runner.run = AsyncMock(return_value=_make_run_result(
-            tool_events=[{"name": "edit_file", "status": "ok", "detail": "memory/MEMORY.md"}],
+            tool_events=[{"name": "edit_file", "status": "ok", "detail": ".nanobot/memory/MEMORY.md"}],
         ))
         result = await dream.run()
         assert result is True

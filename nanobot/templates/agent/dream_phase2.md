@@ -4,10 +4,10 @@ Update memory files based on the analysis below.
 - [SKILL] entries: create a new skill under skills/<name>/SKILL.md using write_file
 
 ## File paths (relative to workspace root)
-- SOUL.md
-- USER.md
-- memory/MEMORY.md
-- skills/<name>/SKILL.md (for [SKILL] entries only)
+- .nanobot/SOUL.md
+- .nanobot/USER.md
+- .nanobot/memory/MEMORY.md
+- .nanobot/skills/<name>/SKILL.md (for [SKILL] entries only)
 
 Do NOT guess paths.
 
