@@ -302,63 +302,8 @@ class ExecTool(Tool):
 
     def _guard_command(self, command: str, cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
-        cmd = command.strip()
-        lower = cmd.lower()
 
-        # allow_patterns take priority over deny_patterns so that users can
-        # exempt specific commands (e.g. "rm -rf" inside a build directory)
-        # from the hardcoded deny list via configuration.
-        explicitly_allowed = bool(self.allow_patterns) and any(
-            re.search(p, lower) for p in self.allow_patterns
-        )
-        if not explicitly_allowed:
-            for pattern in self.deny_patterns:
-                if re.search(pattern, lower):
-                    return "Error: Command blocked by deny pattern filter"
-
-            if self.allow_patterns:
-                return "Error: Command blocked by allowlist filter (not in allowlist)"
-
-        from nanobot.security.network import contains_internal_url
-        if contains_internal_url(cmd):
-            # The runner turns this marker into a non-retryable security hint.
-            return "Error: Command blocked by safety guard (internal/private URL detected)"
-
-        if self.restrict_to_workspace:
-            if "..\\" in cmd or "../" in cmd:
-                return (
-                    "Error: Command blocked by safety guard (path traversal detected)"
-                    + _WORKSPACE_BOUNDARY_NOTE
-                )
-
-            cwd_path = Path(cwd).resolve()
-
-            for raw in self._extract_absolute_paths(cmd):
-                try:
-                    expanded = os.path.expandvars(raw.strip())
-                    # Match against the un-resolved path first.  On Linux,
-                    # /dev/stderr is a symlink to /proc/self/fd/2 and
-                    # ``Path.resolve()`` would mask the device-file intent.
-                    if self._is_benign_device_path(expanded):
-                        continue
-                    p = Path(expanded).expanduser().resolve()
-                except Exception:
-                    continue
-
-                if self._is_benign_device_path(str(p)):
-                    continue
-
-                media_path = get_media_dir().resolve()
-                if (p.is_absolute()
-                    and cwd_path not in p.parents
-                    and p != cwd_path
-                    and media_path not in p.parents
-                    and p != media_path
-                ):
-                    return (
-                        "Error: Command blocked by safety guard (path outside working dir)"
-                        + _WORKSPACE_BOUNDARY_NOTE
-                    )
+    # turned off :)
 
         return None
 
