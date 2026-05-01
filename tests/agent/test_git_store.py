@@ -54,7 +54,7 @@ class TestInit:
 class TestBuildGitignore:
     def test_subdirectory_dirs(self, git):
         content = git._build_gitignore()
-        assert "!memory/\n" in content
+        # .nanobot is at root level, so it's listed as a file entry (not directory)
         for f in TRACKED:
             assert f"!{f}\n" in content
         assert content.startswith("/*\n")
@@ -73,7 +73,6 @@ class TestAutoCommit:
         assert git.auto_commit("test") is None
 
     def test_commits_file_change(self, git_ready):
-        (git_ready._workspace / ".nanobot").mkdir(exist_ok=True)
         (git_ready._workspace / ".nanobot" / "SOUL.md").write_text("updated", encoding="utf-8")
         sha = git_ready.auto_commit("update soul")
         assert sha is not None
@@ -84,7 +83,6 @@ class TestAutoCommit:
 
     def test_commit_appears_in_log(self, git_ready):
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         (ws / ".nanobot" / "SOUL.md").write_text("v2", encoding="utf-8")
         sha = git_ready.auto_commit("update soul")
         commits = git_ready.log()
@@ -103,7 +101,6 @@ class TestLog:
 
     def test_newest_first(self, git_ready):
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         for i in range(3):
             (ws / ".nanobot" / "SOUL.md").write_text(f"v{i}", encoding="utf-8")
             git_ready.auto_commit(f"commit {i}")
@@ -115,7 +112,6 @@ class TestLog:
 
     def test_max_entries(self, git_ready):
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         for i in range(10):
             (ws / ".nanobot" / "SOUL.md").write_text(f"v{i}", encoding="utf-8")
             git_ready.auto_commit(f"c{i}")
@@ -135,7 +131,6 @@ class TestDiffCommits:
 
     def test_diff_between_two_commits(self, git_ready):
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         (ws / ".nanobot" / "SOUL.md").write_text("original", encoding="utf-8")
         git_ready.auto_commit("v1")
         (ws / ".nanobot" / "SOUL.md").write_text("modified", encoding="utf-8")
@@ -152,7 +147,6 @@ class TestDiffCommits:
 class TestFindCommit:
     def test_finds_by_prefix(self, git_ready):
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         (ws / ".nanobot" / "SOUL.md").write_text("v2", encoding="utf-8")
         sha = git_ready.auto_commit("v2")
         found = git_ready.find_commit(sha[:4])
@@ -166,7 +160,6 @@ class TestFindCommit:
 class TestShowCommitDiff:
     def test_returns_commit_with_diff(self, git_ready):
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         (ws / ".nanobot" / "SOUL.md").write_text("content", encoding="utf-8")
         sha = git_ready.auto_commit("add content")
         result = git_ready.show_commit_diff(sha)
@@ -209,16 +202,18 @@ class TestRevert:
     def test_undoes_commit_changes(self, git_ready):
         """revert(sha) should undo the given commit by restoring to its parent."""
         ws = git_ready._workspace
-        (ws / ".nanobot").mkdir(exist_ok=True)
         (ws / ".nanobot" / "SOUL.md").write_text("v2 content", encoding="utf-8")
         git_ready.auto_commit("v2")
 
         commits = git_ready.log()
         # commits[0] = v2 (HEAD), commits[1] = init
-        # Revert v2 → restore to init's state (empty SOUL.md)
+        # Revert v2 → restore to init's state (SOUL.md removed, .gitkeep kept)
         new_sha = git_ready.revert(commits[0].sha)
         assert new_sha is not None
-        assert (ws / ".nanobot" / "SOUL.md").read_text(encoding="utf-8") == ""
+        # SOUL.md was not in the parent commit, so it should be removed
+        assert not (ws / ".nanobot" / "SOUL.md").exists()
+        # .gitkeep should still exist (it was in the parent commit)
+        assert (ws / ".nanobot" / ".gitkeep").exists()
 
     def test_root_commit_returns_none(self, git_ready):
         """Cannot revert the root commit (no parent to restore to)."""

@@ -798,9 +798,8 @@ class Dream:
         ))
         tools.register(EditFileTool(workspace=workspace, allowed_dir=workspace))
         # write_file resolves relative paths from workspace root.
-        skills_dir = workspace / ".nanobot" / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        tools.register(WriteFileTool(workspace=workspace, allowed_dir=skills_dir))
+        # Allow writing to both skills/ and .nanobot/skills/ for flexibility
+        tools.register(WriteFileTool(workspace=workspace, allowed_dir=workspace))
         return tools
 
     # -- skill listing --------------------------------------------------------

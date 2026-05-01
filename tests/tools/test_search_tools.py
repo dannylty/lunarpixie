@@ -335,7 +335,7 @@ def test_subagent_prompt_respects_disabled_skills(tmp_path: Path) -> None:
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    skills_dir = tmp_path / "skills"
+    skills_dir = tmp_path / ".nanobot" / "skills"
     (skills_dir / "alpha").mkdir(parents=True)
     (skills_dir / "alpha" / "SKILL.md").write_text("# Alpha\n\nhidden\n", encoding="utf-8")
     (skills_dir / "beta").mkdir(parents=True)
