@@ -337,13 +337,13 @@ class TestSyncWorkspaceTemplates:
     def test_does_not_overwrite_existing_files(self, tmp_path):
         """Should not overwrite files that already exist."""
         workspace = tmp_path / "workspace"
-        workspace.mkdir(parents=True)
-        (workspace / "AGENTS.md").write_text("existing content")
+        (workspace / ".nanobot").mkdir(parents=True, exist_ok=True)
+        (workspace / ".nanobot" / "AGENTS.md").write_text("existing content")
 
         sync_workspace_templates(workspace, silent=True)
 
         # Existing file should not be changed
-        content = (workspace / "AGENTS.md").read_text()
+        content = (workspace / ".nanobot" / "AGENTS.md").read_text()
         assert content == "existing content"
 
     def test_creates_memory_directory(self, tmp_path):

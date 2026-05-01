@@ -82,7 +82,8 @@ class TestIsDeliverable:
 @pytest.mark.asyncio
 async def test_tick_suppresses_finalization_fallback(tmp_path, monkeypatch) -> None:
     """Finalization fallback should be caught before the evaluator runs."""
-    (tmp_path / "HEARTBEAT.md").write_text("- [ ] check inbox", encoding="utf-8")
+    (tmp_path / ".nanobot").mkdir(exist_ok=True)
+    (tmp_path / ".nanobot" / "HEARTBEAT.md").write_text("- [ ] check inbox", encoding="utf-8")
 
     from nanobot.providers.base import LLMProvider
 
@@ -137,7 +138,8 @@ async def test_tick_suppresses_finalization_fallback(tmp_path, monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_tick_suppresses_leaked_reasoning(tmp_path, monkeypatch) -> None:
     """Leaked internal reasoning should be caught before the evaluator runs."""
-    (tmp_path / "HEARTBEAT.md").write_text("- [ ] check status", encoding="utf-8")
+    (tmp_path / ".nanobot").mkdir(exist_ok=True)
+    (tmp_path / ".nanobot" / "HEARTBEAT.md").write_text("- [ ] check status", encoding="utf-8")
 
     from nanobot.providers.base import LLMProvider
 
@@ -185,7 +187,8 @@ async def test_tick_suppresses_leaked_reasoning(tmp_path, monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_tick_delivers_normal_report(tmp_path, monkeypatch) -> None:
     """Normal reports should pass through deliverability and evaluator."""
-    (tmp_path / "HEARTBEAT.md").write_text("- [ ] check inbox", encoding="utf-8")
+    (tmp_path / ".nanobot").mkdir(exist_ok=True)
+    (tmp_path / ".nanobot" / "HEARTBEAT.md").write_text("- [ ] check inbox", encoding="utf-8")
 
     from nanobot.providers.base import LLMProvider
 
