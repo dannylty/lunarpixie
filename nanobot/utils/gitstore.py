@@ -95,12 +95,26 @@ class GitStore:
                 gitignore.write_text(dream_entries, encoding="utf-8")
 
             # Ensure tracked files exist (touch them if missing) so the initial
-            # commit has something to track.
+            # commit has something to track. Directories are created with a
+            # .gitkeep placeholder so git tracks empty directories.
             for rel in self._tracked_files:
                 p = self._workspace / rel
-                p.parent.mkdir(parents=True, exist_ok=True)
-                if not p.exists():
-                    p.write_text("", encoding="utf-8")
+                if p.is_dir():
+                    # Directory already exists; ensure it has a .gitkeep for git
+                    gitkeep = p / ".gitkeep"
+                    if not gitkeep.exists():
+                        gitkeep.write_text("", encoding="utf-8")
+                elif not p.exists():
+                    # Heuristic: paths with file extensions (e.g. "MEMORY.md") are files,
+                    # dotfiles (e.g. ".nanobot") and paths without extensions are directories.
+                    basename = rel.split("/")[-1].split("\\")[-1]
+                    # Check if it has a file extension (not just a leading dot)
+                    has_extension = "." in basename[1:] if basename.startswith(".") else "." in basename
+                    if has_extension:
+                        p.write_text("", encoding="utf-8")
+                    else:
+                        p.mkdir(parents=True, exist_ok=True)
+                        (p / ".gitkeep").write_text("", encoding="utf-8")
 
             # Initial commit
             porcelain.add(str(self._workspace), paths=[".gitignore"] + self._tracked_files)
@@ -356,13 +370,26 @@ class GitStore:
                 parent_obj = repo[commit_obj.parents[0]]
                 tree = repo[parent_obj.tree]
 
+                # Collect all files that should exist after revert
+                expected_files: set[str] = set()
+                for filepath in self._tracked_files:
+                    self._collect_tree_files(repo, tree, filepath, expected_files)
+
+                # Remove files not in parent's tree, restore files from parent
                 restored: list[str] = []
                 for filepath in self._tracked_files:
-                    content = self._read_blob_from_tree(repo, tree, filepath)
-                    if content is not None:
-                        dest = self._workspace / filepath
-                        dest.write_text(content, encoding="utf-8")
-                        restored.append(filepath)
+                    restored.extend(
+                        self._restore_from_tree(repo, tree, filepath, restored)
+                    )
+
+                # Remove files that shouldn't exist
+                for root, dirs, files in self._workspace.walk():
+                    for fname in files:
+                        full_path = Path(root) / fname
+                        rel_path = str(full_path.relative_to(self._workspace))
+                        if rel_path not in expected_files and self._is_tracked(rel_path):
+                            full_path.unlink()
+                            restored.append(f"removed:{rel_path}")
 
             if not restored:
                 return None
@@ -392,3 +419,76 @@ class GitStore:
             else:
                 return None
         return None
+
+    def _collect_tree_files(self, repo, tree, filepath: str, result: set[str]) -> None:
+        """Collect all file paths under a tree entry."""
+        parts = Path(filepath).parts
+        current = tree
+        rel_parts = []
+
+        for part in parts:
+            try:
+                entry = current[part.encode()]
+            except KeyError:
+                return
+            obj = repo[entry[1]]
+            rel_parts.append(part)
+            if obj.type_name == b"blob":
+                result.add(str(Path(*rel_parts)))
+            elif obj.type_name == b"tree":
+                current = obj
+
+        # If we reached a tree (directory), collect all files
+        if rel_parts and current is not tree:
+            for tree_entry in current.items():
+                obj = repo[tree_entry.sha]
+                if obj.type_name == b"blob":
+                    name = tree_entry.path.decode()
+                    result.add(str(Path(*rel_parts, name)))
+
+    def _is_tracked(self, rel_path: str) -> bool:
+        """Check if a relative path is under a tracked directory."""
+        for tracked in self._tracked_files:
+            if rel_path.startswith(tracked):
+                return True
+        return False
+
+    def _restore_from_tree(self, repo, tree, filepath: str, restored: list[str]) -> list[str]:
+        """Restore files from a tree entry, handling both blobs and directories.
+
+        Returns a list of restored file paths.
+        """
+        parts = Path(filepath).parts
+        current = tree
+        rel_parts = []
+
+        for part in parts:
+            try:
+                entry = current[part.encode()]
+            except KeyError:
+                return restored
+            obj = repo[entry[1]]
+            rel_parts.append(part)
+            if obj.type_name == b"blob":
+                # Restore this file
+                rel_path = str(Path(*rel_parts))
+                dest = self._workspace / rel_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(obj.data.decode("utf-8", errors="replace"), encoding="utf-8")
+                restored.append(rel_path)
+            elif obj.type_name == b"tree":
+                current = obj
+
+        # If we reached a tree (directory), walk all entries and restore them
+        if rel_parts and current is not tree:
+            for tree_entry in current.items():
+                obj = repo[tree_entry.sha]
+                if obj.type_name == b"blob":
+                    name = tree_entry.path.decode()
+                    rel_path = str(Path(*rel_parts, name))
+                    dest = self._workspace / rel_path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(obj.data.decode("utf-8", errors="replace"), encoding="utf-8")
+                    restored.append(rel_path)
+
+        return restored
