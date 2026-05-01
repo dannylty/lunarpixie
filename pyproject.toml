@@ -153,6 +153,19 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    # External library deprecations we can't fix
+    "ignore:pkg_resources is deprecated:DeprecationWarning",
+    "ignore:Deprecated call to.*pkg_resources:DeprecationWarning",
+    "ignore:datetime.datetime.utcfromtimestamp\\(\\) is deprecated:DeprecationWarning",
+    "ignore:websockets.InvalidStatusCode is deprecated:DeprecationWarning",
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+    "ignore:There is no current event loop:DeprecationWarning",
+    # aiohttp recommendation (not a bug, just a best practice)
+    "ignore:It is recommended to use web.AppKey:UserWarning",
+    # Pydantic coroutine warning (false positive in tests)
+    "ignore:coroutine 'Queue.get' was never awaited:RuntimeWarning",
+]
 
 [tool.coverage.run]
 source = ["nanobot"]
