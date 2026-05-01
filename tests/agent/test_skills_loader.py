@@ -41,7 +41,7 @@ def test_list_skills_empty_when_skills_dir_missing(tmp_path: Path) -> None:
 
 def test_list_skills_empty_when_skills_dir_exists_but_empty(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    (workspace / ".nanobot" / "skills").mkdir(parents=True)
+    (workspace / "skills").mkdir(parents=True)
     builtin = tmp_path / "builtin"
     builtin.mkdir()
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
@@ -50,7 +50,7 @@ def test_list_skills_empty_when_skills_dir_exists_but_empty(tmp_path: Path) -> N
 
 def test_list_skills_workspace_entry_shape_and_source(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     skill_path = _write_skill(skills_root, "alpha", body="# Alpha")
     builtin = tmp_path / "builtin"
@@ -65,7 +65,7 @@ def test_list_skills_workspace_entry_shape_and_source(tmp_path: Path) -> None:
 
 def test_list_skills_skips_non_directories_and_missing_skill_md(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     (skills_root / "not_a_dir.txt").write_text("x", encoding="utf-8")
     (skills_root / "no_skill_md").mkdir()
@@ -82,7 +82,7 @@ def test_list_skills_skips_non_directories_and_missing_skill_md(tmp_path: Path) 
 
 def test_list_skills_workspace_shadows_builtin_same_name(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     ws_path = _write_skill(ws_skills, "dup", body="# Workspace wins")
 
@@ -98,7 +98,7 @@ def test_list_skills_workspace_shadows_builtin_same_name(tmp_path: Path) -> None
 
 def test_list_skills_merges_workspace_and_builtin(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     ws_path = _write_skill(ws_skills, "ws_only", body="# W")
     builtin = tmp_path / "builtin"
@@ -114,7 +114,7 @@ def test_list_skills_merges_workspace_and_builtin(tmp_path: Path) -> None:
 
 def test_list_skills_builtin_omitted_when_dir_missing(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     ws_path = _write_skill(ws_skills, "solo", body="# S")
     missing_builtin = tmp_path / "no_such_builtin"
@@ -128,7 +128,7 @@ def test_list_skills_filter_unavailable_excludes_unmet_bin_requirement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     _write_skill(
         skills_root,
@@ -153,7 +153,7 @@ def test_list_skills_filter_unavailable_includes_when_bin_requirement_met(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     skill_path = _write_skill(
         skills_root,
@@ -181,7 +181,7 @@ def test_list_skills_filter_unavailable_false_keeps_unmet_requirements(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     skill_path = _write_skill(
         skills_root,
@@ -204,7 +204,7 @@ def test_list_skills_filter_unavailable_excludes_unmet_env_requirement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     _write_skill(
         skills_root,
@@ -224,7 +224,7 @@ def test_list_skills_openclaw_metadata_parsed_for_requirements(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "ws"
-    skills_root = workspace / ".nanobot" / "skills"
+    skills_root = workspace / "skills"
     skills_root.mkdir(parents=True)
     skill_dir = skills_root / "openclaw_skill"
     skill_dir.mkdir(parents=True)
@@ -254,7 +254,7 @@ def test_list_skills_openclaw_metadata_parsed_for_requirements(
 
 def test_disabled_skills_excluded_from_list(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     _write_skill(ws_skills, "alpha", body="# Alpha")
     beta_path = _write_skill(ws_skills, "beta", body="# Beta")
@@ -270,7 +270,7 @@ def test_disabled_skills_excluded_from_list(tmp_path: Path) -> None:
 
 def test_disabled_skills_empty_set_no_effect(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     _write_skill(ws_skills, "alpha", body="# Alpha")
     _write_skill(ws_skills, "beta", body="# Beta")
@@ -284,7 +284,7 @@ def test_disabled_skills_empty_set_no_effect(tmp_path: Path) -> None:
 
 def test_disabled_skills_excluded_from_build_skills_summary(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     _write_skill(ws_skills, "alpha", body="# Alpha")
     _write_skill(ws_skills, "beta", body="# Beta")
@@ -299,7 +299,7 @@ def test_disabled_skills_excluded_from_build_skills_summary(tmp_path: Path) -> N
 
 def test_disabled_skills_excluded_from_get_always_skills(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     _write_skill(ws_skills, "alpha", metadata_json={"always": True}, body="# Alpha")
     _write_skill(ws_skills, "beta", metadata_json={"always": True}, body="# Beta")
@@ -318,7 +318,7 @@ def test_disabled_skills_excluded_from_get_always_skills(tmp_path: Path) -> None
 def test_build_skills_summary_folded_description(tmp_path: Path) -> None:
     """description: > (YAML folded scalar) should be parsed correctly."""
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     skill_dir = ws_skills / "pdf"
     skill_dir.mkdir(parents=True)
@@ -344,7 +344,7 @@ def test_build_skills_summary_folded_description(tmp_path: Path) -> None:
 def test_build_skills_summary_literal_description(tmp_path: Path) -> None:
     """description: | (YAML literal scalar) should be parsed correctly."""
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     skill_dir = ws_skills / "multi"
     skill_dir.mkdir(parents=True)
@@ -373,7 +373,7 @@ def test_build_skills_summary_literal_description(tmp_path: Path) -> None:
 def test_get_skill_metadata_handles_yaml_types(tmp_path: Path) -> None:
     """yaml.safe_load returns native types; always should be True, not 'true'."""
     workspace = tmp_path / "ws"
-    ws_skills = workspace / ".nanobot" / "skills"
+    ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
     skill_dir = ws_skills / "typed"
     skill_dir.mkdir(parents=True)
