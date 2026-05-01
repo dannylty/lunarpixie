@@ -74,7 +74,7 @@ class HeartbeatService:
 
     @property
     def heartbeat_file(self) -> Path:
-        return self.workspace / "HEARTBEAT.md"
+        return self.workspace / ".nanobot" / "HEARTBEAT.md"
 
     def _read_heartbeat_file(self) -> str | None:
         if self.heartbeat_file.exists():
