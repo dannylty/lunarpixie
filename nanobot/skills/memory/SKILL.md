@@ -31,6 +31,5 @@ Examples (replace `keyword`):
 
 ## Important
 
-- **Do NOT edit SOUL.md, USER.md, or MEMORY.md.** They are automatically managed by Dream.
+  - **Do NOT edit SOUL.md, USER.md, or MEMORY.md.** They are automatically managed by Dream.
 - If you notice outdated information, it will be corrected when Dream runs next.
-- Users can view Dream's activity with the `/dream-log` command.
