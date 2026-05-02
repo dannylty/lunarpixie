@@ -192,6 +192,21 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_clear(ctx: CommandContext) -> OutboundMessage:
+    """Stop active task, discard the conversation, and start fresh (no consolidation)."""
+    loop = ctx.loop
+    await loop._cancel_active_tasks(ctx.key)
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    session.clear()
+    loop.sessions.save(session)
+    loop.sessions.invalidate(session.key)
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content="Conversation cleared.",
+        metadata=dict(ctx.msg.metadata or {})
+    )
+
+
 async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
     """Manually trigger a Dream consolidation run."""
     import time
@@ -293,7 +308,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
 
 def build_help_text() -> str:
     """Build canonical help text shared across channels."""
-lines = ["🐈 nanobot commands:"]
+    lines = ["🐈 nanobot commands:"]
     for spec in BUILTIN_COMMAND_SPECS:
         command = spec.command
         if spec.arg_hint:
@@ -308,6 +323,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/restart", cmd_restart)
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
+    router.exact("/clear", cmd_clear)
     router.exact("/status", cmd_status)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)

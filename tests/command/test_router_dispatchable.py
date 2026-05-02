@@ -21,6 +21,7 @@ class TestIsDispatchableCommand:
 
     def test_exact_commands_match(self, router: CommandRouter) -> None:
         assert router.is_dispatchable_command("/new")
+        assert router.is_dispatchable_command("/clear")
         assert router.is_dispatchable_command("/help")
         assert router.is_dispatchable_command("/dream")
 
