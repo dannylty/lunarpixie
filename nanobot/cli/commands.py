@@ -1021,8 +1021,10 @@ def _run_gateway(
     console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
 
     async def _health_server(host: str, health_port: int):
-        """Lightweight HTTP health endpoint on the gateway port."""
+        """Lightweight HTTP health + metrics endpoint on the gateway port."""
         import json as _json
+
+        from nanobot.metrics import generate_metrics
 
         async def handle(reader, writer):
             try:
@@ -1045,6 +1047,19 @@ def _run_gateway(
                     f"Content-Length: {len(body)}\r\n"
                     f"\r\n{body}"
                 )
+            elif method == "GET" and path == "/metrics":
+                body = generate_metrics()
+                resp = (
+                    f"HTTP/1.0 200 OK\r\n"
+                    f"Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    f"\r\n"
+                )
+                writer.write(resp.encode())
+                writer.write(body)
+                await writer.drain()
+                writer.close()
+                return
             else:
                 body = "Not Found"
                 resp = (
@@ -1060,6 +1075,7 @@ def _run_gateway(
 
         server = await asyncio.start_server(handle, host, health_port)
         console.print(f"[green]✓[/green] Health endpoint: http://{host}:{health_port}/health")
+        console.print(f"[green]✓[/green] Metrics endpoint: http://{host}:{health_port}/metrics")
         async with server:
             await server.serve_forever()
     # Register Dream system job (always-on, idempotent on restart)

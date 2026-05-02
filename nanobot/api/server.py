@@ -15,6 +15,8 @@ from typing import Any
 from aiohttp import web
 from loguru import logger
 
+from nanobot.metrics import generate_metrics
+
 from nanobot.config.paths import get_media_dir
 from nanobot.utils.helpers import safe_filename
 from nanobot.utils.media_decode import (
@@ -348,6 +350,14 @@ async def handle_models(request: web.Request) -> web.Response:
     )
 
 
+async def handle_metrics(request: web.Request) -> web.Response:
+    """GET /metrics — Prometheus metrics endpoint."""
+    return web.Response(
+        body=generate_metrics(),
+        content_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 async def handle_health(request: web.Request) -> web.Response:
     """GET /health"""
     return web.json_response({"status": "ok"})
@@ -377,4 +387,5 @@ def create_app(
     app.router.add_post("/v1/chat/completions", handle_chat_completions)
     app.router.add_get("/v1/models", handle_models)
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/metrics", handle_metrics)
     return app

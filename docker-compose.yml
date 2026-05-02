@@ -39,7 +39,7 @@ services:
     command: ["serve", "--host", "0.0.0.0"]
     restart: unless-stopped
     ports:
-      - 127.0.0.1:8900:8900
+      - 127.0.0.1:8900:8900  # API + /metrics (Prometheus scrape target)
     deploy:
       resources:
         limits:
