@@ -812,7 +812,7 @@ class Dream:
 
         _DESC_RE = _re.compile(r"^description:\s*(.+)$", _re.MULTILINE | _re.IGNORECASE)
         entries: dict[str, str] = {}
-        for base in (self.store.workspace / "skills", BUILTIN_SKILLS_DIR):
+        for base in (self.store.workspace / ".nanobot" / "skills", BUILTIN_SKILLS_DIR):
             if not base.exists():
                 continue
             for d in base.iterdir():
