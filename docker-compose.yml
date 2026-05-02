@@ -19,7 +19,7 @@ services:
   nanobot-gateway:
     container_name: nanobot-gateway
     <<: *common-config
-    command: ["gateway"]
+    command: ["gateway", "--host", "0.0.0.0"]
     restart: unless-stopped
     ports:
       - 18790:18790
