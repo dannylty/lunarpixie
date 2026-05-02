@@ -42,6 +42,7 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.metrics import record_usage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults
@@ -909,6 +910,14 @@ class AgentLoop:
         finally:
             reset_file_states(file_state_token)
         self._last_usage = result.usage
+        if result.usage:
+            record_usage(
+                usage=result.usage,
+                model=self.model,
+                channel=channel,
+                chat_id=chat_id,
+                session_key=session_key or "",
+            )
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             # Push final content through stream so streaming channels (e.g. Feishu)
