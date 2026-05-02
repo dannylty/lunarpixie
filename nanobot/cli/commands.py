@@ -733,6 +733,7 @@ def serve(
 @app.command()
 def gateway(
     port: int | None = typer.Option(None, "--port", "-p", help="Gateway port"),
+    host: str | None = typer.Option(None, "--host", "-H", help="Bind address"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
@@ -743,6 +744,8 @@ def gateway(
 
         logging.basicConfig(level=logging.DEBUG)
     cfg = _load_runtime_config(config, workspace)
+    if host is not None:
+        cfg.gateway.host = host
     _run_gateway(cfg, port=port)
 
 
