@@ -262,6 +262,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("status", "Show bot status"),
         BotCommand("history", "Show recent conversation messages"),
         BotCommand("dream", "Run Dream memory consolidation now"),
+        BotCommand("clear", "Discard conversation and start fresh"),
         BotCommand("help", "Show available commands"),
     ]
 
@@ -341,7 +342,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(MessageHandler(filters.Regex(r"^/start(?:@\w+)?$"), self._on_start))
         self._app.add_handler(
             MessageHandler(
-                filters.Regex(r"^/(new|stop|restart|status|dream)(?:@\w+)?(?:\s+.*)?$"),
+                filters.Regex(r"^/(new|stop|restart|status|dream|clear|history)(?:@\w+)?(?:\s+.*)?$"),
                 self._forward_command,
             )
         )
