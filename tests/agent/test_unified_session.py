@@ -22,7 +22,7 @@ import pytest
 from nanobot.agent.loop import AgentLoop
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.command.builtin import cmd_new, register_builtin_commands
+from nanobot.command.builtin import cmd_clear, cmd_new, register_builtin_commands
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.config.schema import AgentDefaults, Config
 from nanobot.session.manager import Session, SessionManager
@@ -285,6 +285,91 @@ class TestCmdNewUnifiedSession:
         )
         ctx = CommandContext(msg=msg, session=None, key="unified:default", raw="/new", loop=loop)
         await cmd_new(ctx)
+
+        sessions.invalidate("unified:default")
+        sessions.invalidate("discord:999")
+        assert sessions.get_or_create("unified:default").messages == []
+        assert len(sessions.get_or_create("discord:999").messages) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestCmdClearUnifiedSession — /clear command behaviour in unified mode
+# ---------------------------------------------------------------------------
+
+class TestCmdClearUnifiedSession:
+    """/clear command routing and session-clear behaviour in unified mode."""
+
+    def test_clear_is_not_a_priority_command(self):
+        """/clear must NOT be in the priority table — it must go through _dispatch()
+        so the unified session key rewrite applies before cmd_clear runs."""
+        router = CommandRouter()
+        register_builtin_commands(router)
+        assert router.is_priority("/clear") is False
+
+    def test_clear_is_an_exact_command(self):
+        """/clear must be registered as an exact command."""
+        router = CommandRouter()
+        register_builtin_commands(router)
+        assert "/clear" in router._exact
+
+    @pytest.mark.asyncio
+    async def test_cmd_clear_clears_unified_session(self, tmp_path: Path):
+        """cmd_clear called with key='unified:default' clears the shared session."""
+        sessions = SessionManager(tmp_path)
+
+        # Pre-populate the shared session with some messages
+        shared = sessions.get_or_create("unified:default")
+        shared.add_message("user", "hello from telegram")
+        shared.add_message("assistant", "hi there")
+        sessions.save(shared)
+        assert len(sessions.get_or_create("unified:default").messages) == 2
+
+        loop = SimpleNamespace(
+            sessions=sessions,
+            consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
+            _cancel_active_tasks=AsyncMock(return_value=0),
+        )
+        loop._schedule_background = lambda coro: asyncio.ensure_future(coro)
+
+        msg = InboundMessage(
+            channel="telegram", sender_id="user1", chat_id="111", content="/clear",
+            session_key_override="unified:default",
+        )
+        ctx = CommandContext(msg=msg, session=None, key="unified:default", raw="/clear", loop=loop)
+
+        result = await cmd_clear(ctx)
+
+        assert "Conversation cleared" in result.content
+        sessions.invalidate("unified:default")
+        reloaded = sessions.get_or_create("unified:default")
+        assert reloaded.messages == []
+
+    @pytest.mark.asyncio
+    async def test_cmd_clear_in_unified_mode_does_not_affect_other_sessions(self, tmp_path: Path):
+        """Clearing unified:default must not touch other sessions on disk."""
+        sessions = SessionManager(tmp_path)
+
+        shared = sessions.get_or_create("unified:default")
+        shared.add_message("user", "hello from telegram")
+        sessions.save(shared)
+
+        other = sessions.get_or_create("discord:999")
+        other.add_message("user", "other chat")
+        sessions.save(other)
+
+        loop = SimpleNamespace(
+            sessions=sessions,
+            consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
+            _cancel_active_tasks=AsyncMock(return_value=0),
+        )
+        loop._schedule_background = lambda coro: asyncio.ensure_future(coro)
+
+        msg = InboundMessage(
+            channel="telegram", sender_id="user1", chat_id="111", content="/clear",
+            session_key_override="unified:default",
+        )
+        ctx = CommandContext(msg=msg, session=None, key="unified:default", raw="/clear", loop=loop)
+        await cmd_clear(ctx)
 
         sessions.invalidate("unified:default")
         sessions.invalidate("discord:999")
