@@ -13,4 +13,12 @@ Fix (pick one):
 EOF
     exit 1
 fi
+
+# Start internal services if the services directory exists
+if [ -d "$HOME/services" ] && [ -f "$HOME/services/start.sh" ]; then
+    echo "Starting internal services..."
+    bash "$HOME/services/start.sh"
+    sleep 2
+fi
+
 exec nanobot "$@"
