@@ -119,12 +119,12 @@ class TestDreamRun:
         assert write_tool is not None
 
         result = await write_tool.execute(
-            path="skills/test-skill/SKILL.md",
+            path=".nanobot/skills/test-skill/SKILL.md",
             content="---\nname: test-skill\ndescription: Test\n---\n",
         )
 
         assert "Successfully wrote" in result
-        assert (store.workspace / "skills" / "test-skill" / "SKILL.md").exists()
+        assert (store.workspace / ".nanobot" / "skills" / "test-skill" / "SKILL.md").exists()
 
     async def test_phase1_prompt_includes_line_age_annotations(self, dream, mock_provider, mock_runner, store):
         """Phase 1 prompt should have per-line age suffixes in MEMORY.md when git is available."""
