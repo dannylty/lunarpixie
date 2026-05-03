@@ -598,11 +598,25 @@ class AgentLoop:
             # Block if nothing drained but sub-agents spawned in this dispatch
             # are still running.  Keeps the runner loop alive so subsequent
             # completions are injected in-order rather than dispatched separately.
+            # On single-GPU setups subagents serialize behind the main agent's
+            # LLM calls and may legitimately take much longer than the default
+            # LLM per-call timeout.  NANOBOT_SUBAGENT_WAIT_TIMEOUT_S controls
+            # how long we block here; 0 disables the timeout.
             if (not items
                     and session is not None
                     and self.subagents.get_running_count_by_session(session.key) > 0):
+                _raw_wait = os.environ.get("NANOBOT_SUBAGENT_WAIT_TIMEOUT_S", "1800").strip()
                 try:
-                    msg = await asyncio.wait_for(pending_queue.get(), timeout=300)
+                    _wait_timeout: float | None = float(_raw_wait)
+                except (TypeError, ValueError):
+                    _wait_timeout = 1800.0
+                if _wait_timeout is not None and _wait_timeout <= 0:
+                    _wait_timeout = None
+                try:
+                    if _wait_timeout is None:
+                        msg = await pending_queue.get()
+                    else:
+                        msg = await asyncio.wait_for(pending_queue.get(), timeout=_wait_timeout)
                 except asyncio.TimeoutError:
                     logger.warning(
                         "Timeout waiting for sub-agent completion in session {}",

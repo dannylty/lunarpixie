@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -204,6 +205,16 @@ class SubagentManager:
                 {"role": "user", "content": task},
             ]
 
+            # Subagents are background tasks; on single-GPU setups their LLM
+            # calls queue behind the main agent's calls, so the per-call timeout
+            # must be long enough to absorb both queue wait and generation time.
+            # NANOBOT_SUBAGENT_LLM_TIMEOUT_S=0 disables the timeout entirely.
+            _raw_llm_t = os.environ.get("NANOBOT_SUBAGENT_LLM_TIMEOUT_S", "0").strip()
+            try:
+                _subagent_llm_timeout: float | None = float(_raw_llm_t)
+            except (TypeError, ValueError):
+                _subagent_llm_timeout = 0.0
+
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
@@ -215,6 +226,7 @@ class SubagentManager:
                 error_message=None,
                 fail_on_tool_error=True,
                 checkpoint_callback=_on_checkpoint,
+                llm_timeout_s=_subagent_llm_timeout,
             ))
             status.phase = "done"
             status.stop_reason = result.stop_reason
