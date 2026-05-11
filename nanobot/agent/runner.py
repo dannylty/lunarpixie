@@ -624,9 +624,21 @@ class AgentRunner:
         )
 
         if wants_streaming:
+            # Track thinking duration
+            _thinking_in_progress = False
+
             async def _stream(delta: str) -> None:
+                nonlocal _thinking_in_progress
                 if delta:
                     context.streamed_content = True
+                    # Track thinking start/end
+                    if "<antThinking>" in delta and not _thinking_in_progress:
+                        _thinking_in_progress = True
+                        context.thinking_start_time = time.time()
+                    elif "</antThinking>" in delta and _thinking_in_progress:
+                        _thinking_in_progress = False
+                        context.thinking_end_time = time.time()
+                        context.thinking_duration_s = context.thinking_end_time - context.thinking_start_time
                 await hook.on_stream(context, delta)
 
             coro = self.provider.chat_stream_with_retry(
@@ -635,11 +647,20 @@ class AgentRunner:
             )
         elif wants_progress_streaming:
             stream_buf = ""
+            _thinking_in_progress = False
 
             async def _stream_progress(delta: str) -> None:
-                nonlocal stream_buf
+                nonlocal stream_buf, _thinking_in_progress
                 if not delta:
                     return
+                # Track thinking start/end
+                if "<antThinking>" in delta and not _thinking_in_progress:
+                    _thinking_in_progress = True
+                    context.thinking_start_time = time.time()
+                elif "</antThinking>" in delta and _thinking_in_progress:
+                    _thinking_in_progress = False
+                    context.thinking_end_time = time.time()
+                    context.thinking_duration_s = context.thinking_end_time - context.thinking_start_time
                 prev_clean = strip_think(stream_buf)
                 stream_buf += delta
                 new_clean = strip_think(stream_buf)

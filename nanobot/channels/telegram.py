@@ -526,7 +526,7 @@ class TelegramChannel(BaseChannel):
 
         # Send text content
         if msg.content and msg.content != "[empty message]":
-            render_as_blockquote = bool(msg.metadata.get("_tool_hint"))
+            render_as_blockquote = bool(msg.metadata.get("_tool_hint")) or bool(msg.metadata.get("_perf_hint"))
             buttons = getattr(msg, "buttons", None) or []
             reply_markup = self._build_keyboard(buttons) if buttons else None
             text = msg.content

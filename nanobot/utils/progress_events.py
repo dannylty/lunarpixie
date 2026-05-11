@@ -19,17 +19,38 @@ def on_progress_accepts_tool_events(cb: Callable[..., Any]) -> bool:
     return "tool_events" in sig.parameters
 
 
+def on_progress_accepts_perf_hint(cb: Callable[..., Any]) -> bool:
+    try:
+        sig = inspect.signature(cb)
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return True
+    return "perf_hint" in sig.parameters
+
+
 async def invoke_on_progress(
     on_progress: Callable[..., Awaitable[None]],
     content: str,
     *,
     tool_hint: bool = False,
+    perf_hint: bool = False,
     tool_events: list[dict[str, Any]] | None = None,
 ) -> None:
-    if tool_events and on_progress_accepts_tool_events(on_progress):
-        await on_progress(content, tool_hint=tool_hint, tool_events=tool_events)
+    accepts_perf = on_progress_accepts_perf_hint(on_progress)
+    accepts_tool_events = on_progress_accepts_tool_events(on_progress)
+
+    if tool_events and accepts_tool_events:
+        if accepts_perf:
+            await on_progress(content, tool_hint=tool_hint, perf_hint=perf_hint, tool_events=tool_events)
+        else:
+            await on_progress(content, tool_hint=tool_hint, tool_events=tool_events)
         return
-    await on_progress(content, tool_hint=tool_hint)
+
+    if accepts_perf:
+        await on_progress(content, tool_hint=tool_hint, perf_hint=perf_hint)
+    else:
+        await on_progress(content, tool_hint=tool_hint)
 
 
 def build_tool_event_start_payload(tool_call: Any) -> dict[str, Any]:
