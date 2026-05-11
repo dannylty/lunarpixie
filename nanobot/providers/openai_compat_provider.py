@@ -552,6 +552,9 @@ class OpenAICompatProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
 
+       # Request llama.cpp timings for perf hints
+        kwargs.setdefault("extra_body", {}).setdefault("timings_per_token", True)
+
         # Backfill reasoning_content="" on assistants missing it: DeepSeek
         # thinking mode rejects history otherwise (#3554, #3584); "" reads
         # as "no thinking that turn". DeepSeek-V4/reasoner reason natively,
@@ -742,8 +745,8 @@ class OpenAICompatProvider(LLMProvider):
         """Extract prefill and generation tokens-per-second from llama.cpp timings.
 
         Returns (prefill_tps, generation_tps) or (None, None) if not available.
-        llama.cpp reports ``timings.prompt.ms_per_token`` and
-        ``timings.predicted.ms_per_token`` when the ``--metrics`` flag is set.
+        llama.cpp reports ``timings.prompt_per_second`` and
+        ``timings.predicted_per_second`` when ``timings_per_token: true`` is set.
         """
         response_map = cls._maybe_mapping(response)
         if response_map is None:
@@ -756,17 +759,13 @@ class OpenAICompatProvider(LLMProvider):
         prefill_tps: float | None = None
         generation_tps: float | None = None
 
-        prompt = timings.get("prompt")
-        if isinstance(prompt, dict):
-            ms_per_token = prompt.get("ms_per_token")
-            if ms_per_token and isinstance(ms_per_token, (int, float)) and ms_per_token > 0:
-                prefill_tps = round(1000.0 / ms_per_token, 2)
+        pp = timings.get("prompt_per_second")
+        if pp and isinstance(pp, (int, float)) and pp > 0:
+            prefill_tps = round(pp, 2)
 
-        predicted = timings.get("predicted")
-        if isinstance(predicted, dict):
-            ms_per_token = predicted.get("ms_per_token")
-            if ms_per_token and isinstance(ms_per_token, (int, float)) and ms_per_token > 0:
-                generation_tps = round(1000.0 / ms_per_token, 2)
+        gp = timings.get("predicted_per_second")
+        if gp and isinstance(gp, (int, float)) and gp > 0:
+            generation_tps = round(gp, 2)
 
         return prefill_tps, generation_tps
 
