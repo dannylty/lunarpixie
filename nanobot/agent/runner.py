@@ -276,6 +276,8 @@ class AgentRunner:
             context.response = response
             context.usage = dict(raw_usage)
             context.tool_calls = list(response.tool_calls)
+            context.prefill_tps = response.prefill_tps
+            context.generation_tps = response.generation_tps
             self._accumulate_usage(usage, raw_usage)
 
             if response.should_execute_tools:

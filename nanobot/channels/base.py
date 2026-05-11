@@ -28,6 +28,7 @@ class BaseChannel(ABC):
     transcription_language: str | None = None
     send_progress: bool = True
     send_tool_hints: bool = False
+    send_perf_metrics: bool = False
 
     def __init__(self, config: Any, bus: MessageBus):
         """

@@ -61,6 +61,9 @@ class LLMResponse:
     error_code: str | None = None  # Provider/code semantic, e.g. rate_limit_exceeded.
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
+    # Performance metrics (tokens per second), populated when the provider reports timings
+    prefill_tps: float | None = None
+    generation_tps: float | None = None
 
     @property
     def has_tool_calls(self) -> bool:
