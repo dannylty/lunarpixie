@@ -140,15 +140,6 @@ class _LoopHook(AgentHook):
                 if thought:
                     await self._on_progress(thought)
             tool_hint = self._loop._strip_think(self._loop._tool_hint(context.tool_calls))
-            # Append performance metrics if enabled and available
-            if self._loop.channels_config and self._loop.channels_config.send_perf_metrics:
-                perf_parts: list[str] = []
-                if context.prefill_tps is not None:
-                    perf_parts.append(f"{context.prefill_tps} t/s prefill")
-                if context.generation_tps is not None:
-                    perf_parts.append(f"{context.generation_tps} t/s gen")
-                if perf_parts:
-                    tool_hint = " · ".join(perf_parts) + (" · " + tool_hint if tool_hint else "")
             tool_events = [build_tool_event_start_payload(tc) for tc in context.tool_calls]
             await invoke_on_progress(
                 self._on_progress,
@@ -189,6 +180,15 @@ class _LoopHook(AgentHook):
             u.get("completion_tokens", 0),
             u.get("cached_tokens", 0),
         )
+        # Send performance metrics after the response if enabled and available
+        if self._on_progress and self._loop.channels_config and self._loop.channels_config.send_perf_metrics:
+            perf_parts: list[str] = []
+            if context.prefill_tps is not None:
+                perf_parts.append(f"{context.prefill_tps} t/s prefill")
+            if context.generation_tps is not None:
+                perf_parts.append(f"{context.generation_tps} t/s gen")
+            if perf_parts:
+                await self._on_progress(" · ".join(perf_parts))
 
     def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
         return self._loop._strip_think(content)
