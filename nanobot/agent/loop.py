@@ -165,12 +165,18 @@ class _LoopHook(AgentHook):
         # Send performance metrics after the response if enabled and available
         if self._on_progress and self._loop.channels_config and self._loop.channels_config.send_perf_metrics:
             perf_parts: list[str] = []
+            if context.thinking_duration_s is not None and context.thinking_duration_s > 0:
+                perf_parts.append(f"{context.thinking_duration_s:.1f}s think")
             if context.prefill_tps is not None:
-                perf_parts.append(f"{context.prefill_tps} t/s prefill")
+                perf_parts.append(f"{context.prefill_tps:.1f} t/s prefill")
             if context.generation_tps is not None:
-                perf_parts.append(f"{context.generation_tps} t/s gen")
+                perf_parts.append(f"{context.generation_tps:.1f} t/s gen")
             if perf_parts:
-                await self._on_progress(" · ".join(perf_parts))
+                await invoke_on_progress(
+                    self._on_progress,
+                    " · ".join(perf_parts),
+                    perf_hint=True,
+                )
 
     def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
         return self._loop._strip_think(content)
@@ -1039,11 +1045,13 @@ class AgentLoop:
             content: str,
             *,
             tool_hint: bool = False,
+            perf_hint: bool = False,
             tool_events: list[dict[str, Any]] | None = None,
         ) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
             meta["_tool_hint"] = tool_hint
+            meta["_perf_hint"] = perf_hint
             if tool_events:
                 meta["_tool_events"] = tool_events
             await self.bus.publish_outbound(
