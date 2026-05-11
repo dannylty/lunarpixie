@@ -163,7 +163,7 @@ class _LoopHook(AgentHook):
             u.get("cached_tokens", 0),
         )
         # Send performance metrics after the response if enabled and available
-        if self._on_progress and self._loop.channels_config and self._loop.channels_config.send_perf_metrics:
+        if self._on_progress and self._loop.channels_config and self._loop.channels_config.send_perf_hints:
             perf_parts: list[str] = []
             if context.thinking_duration_s is not None and context.thinking_duration_s > 0:
                 perf_parts.append(f"{context.thinking_duration_s:.1f}s think")
