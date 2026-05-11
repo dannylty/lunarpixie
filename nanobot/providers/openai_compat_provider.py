@@ -738,6 +738,39 @@ class OpenAICompatProvider(LLMProvider):
         return str(value)
 
     @classmethod
+    def _extract_timings(cls, response: Any) -> tuple[float | None, float | None]:
+        """Extract prefill and generation tokens-per-second from llama.cpp timings.
+
+        Returns (prefill_tps, generation_tps) or (None, None) if not available.
+        llama.cpp reports ``timings.prompt.ms_per_token`` and
+        ``timings.predicted.ms_per_token`` when the ``--metrics`` flag is set.
+        """
+        response_map = cls._maybe_mapping(response)
+        if response_map is None:
+            return None, None
+
+        timings = response_map.get("timings")
+        if not timings or not isinstance(timings, dict):
+            return None, None
+
+        prefill_tps: float | None = None
+        generation_tps: float | None = None
+
+        prompt = timings.get("prompt")
+        if isinstance(prompt, dict):
+            ms_per_token = prompt.get("ms_per_token")
+            if ms_per_token and isinstance(ms_per_token, (int, float)) and ms_per_token > 0:
+                prefill_tps = round(1000.0 / ms_per_token, 2)
+
+        predicted = timings.get("predicted")
+        if isinstance(predicted, dict):
+            ms_per_token = predicted.get("ms_per_token")
+            if ms_per_token and isinstance(ms_per_token, (int, float)) and ms_per_token > 0:
+                generation_tps = round(1000.0 / ms_per_token, 2)
+
+        return prefill_tps, generation_tps
+
+    @classmethod
     def _extract_usage(cls, response: Any) -> dict[str, int]:
         """Extract token usage from an OpenAI-compatible response.
 
@@ -868,12 +901,15 @@ class OpenAICompatProvider(LLMProvider):
                     function_provider_specific_fields=fn_prov,
                 ))
 
+            prefill_tps, generation_tps = self._extract_timings(response_map)
             return LLMResponse(
                 content=content,
                 tool_calls=parsed_tool_calls,
                 finish_reason=finish_reason,
                 usage=self._extract_usage(response_map),
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+                prefill_tps=prefill_tps,
+                generation_tps=generation_tps,
             )
 
         if not response.choices:
@@ -915,12 +951,15 @@ class OpenAICompatProvider(LLMProvider):
         if not reasoning_content and getattr(msg, "reasoning", None):
             reasoning_content = msg.reasoning
 
+        prefill_tps, generation_tps = self._extract_timings(response)
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason or "stop",
             usage=self._extract_usage(response),
             reasoning_content=reasoning_content,
+            prefill_tps=prefill_tps,
+            generation_tps=generation_tps,
         )
 
     @classmethod
@@ -1008,6 +1047,17 @@ class OpenAICompatProvider(LLMProvider):
             for tc in (delta.tool_calls or []) if delta else []:
                 _accum_tc(tc, getattr(tc, "index", 0))
 
+        prefill_tps: float | None = None
+        generation_tps: float | None = None
+        for chunk in chunks:
+            chunk_map = cls._maybe_mapping(chunk)
+            if chunk_map is not None:
+                pt, gt = cls._extract_timings(chunk_map)
+                if pt is not None:
+                    prefill_tps = pt
+                if gt is not None:
+                    generation_tps = gt
+
         return LLMResponse(
             content="".join(content_parts) or None,
             tool_calls=[
@@ -1024,6 +1074,8 @@ class OpenAICompatProvider(LLMProvider):
             finish_reason=finish_reason,
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
+            prefill_tps=prefill_tps,
+            generation_tps=generation_tps,
         )
 
     @classmethod

@@ -25,6 +25,8 @@ class AgentHookContext:
     final_content: str | None = None
     stop_reason: str | None = None
     error: str | None = None
+    prefill_tps: float | None = None
+    generation_tps: float | None = None
 
 
 class AgentHook:

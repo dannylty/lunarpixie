@@ -36,6 +36,7 @@ _SEND_RETRY_DELAYS = (1, 2, 4)
 _BOOL_CAMEL_ALIASES: dict[str, str] = {
     "send_progress": "sendProgress",
     "send_tool_hints": "sendToolHints",
+    "send_perf_metrics": "sendPerfMetrics",
 }
 
 class ChannelManager:
@@ -103,6 +104,9 @@ class ChannelManager:
                 )
                 channel.send_tool_hints = self._resolve_bool_override(
                     section, "send_tool_hints", self.config.channels.send_tool_hints,
+                )
+                channel.send_perf_metrics = self._resolve_bool_override(
+                    section, "send_perf_metrics", self.config.channels.send_perf_metrics,
                 )
                 self.channels[name] = channel
                 logger.info("{} channel enabled", cls.display_name)
