@@ -25,6 +25,13 @@ class AgentHookContext:
     final_content: str | None = None
     stop_reason: str | None = None
     error: str | None = None
+    prefill_tps: float | None = None
+    generation_tps: float | None = None
+    # Thinking performance tracking
+    thinking_start_time: float | None = None
+    thinking_end_time: float | None = None
+    thinking_duration_s: float | None = None
+    thinking_tokens: int | None = None
 
 
 class AgentHook:

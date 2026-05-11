@@ -82,7 +82,7 @@ def test_exec_blocks_writes_to_history_jsonl(command):
     """Guard is disabled in Docker; expect None for all commands."""
     tool = ExecTool()
     result = tool._guard_command(command, "/tmp")
- assert result is None
+    assert result is None
 
 
 @pytest.mark.parametrize(

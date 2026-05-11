@@ -63,7 +63,7 @@ class MemoryStore:
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit non-int cursor warning
         self._oversize_logged = False  # rate-limit oversized-entry warning
-  self._git = GitStore(self.workspace, tracked_files=[".nanobot"])
+        self._git = GitStore(self.workspace, tracked_files=[".nanobot"])
         self._maybe_migrate_legacy_history()
 
     def _migrate_legacy_workspace_state(self) -> None:
@@ -881,7 +881,7 @@ class Dream:
         ))
         tools.register(EditFileTool(workspace=workspace, allowed_dir=workspace, file_states=file_states))
         # write_file resolves relative paths from workspace root.
-  skills_dir = workspace / "skills"
+        skills_dir = workspace / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
         tools.register(WriteFileTool(workspace=workspace, allowed_dir=workspace, file_states=file_states))
         return tools

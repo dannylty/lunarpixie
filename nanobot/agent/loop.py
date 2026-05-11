@@ -42,7 +42,6 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.metrics import record_usage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults
@@ -180,6 +179,24 @@ class _LoopHook(AgentHook):
             u.get("completion_tokens", 0),
             u.get("cached_tokens", 0),
         )
+
+        # Send performance metrics after the response if enabled and available
+        if self._on_progress and self._loop.channels_config and self._loop.channels_config.send_perf_hints:
+            perf_parts: list[str] = []
+            if context.thinking_duration_s is not None and context.thinking_duration_s > 0:
+                perf_parts.append(f"{context.thinking_duration_s:.1f}s")
+            if context.prefill_tps is not None:
+                perf_parts.append(f"{context.prefill_tps:.1f} pf")
+            if context.generation_tps is not None:
+                perf_parts.append(f"{context.generation_tps:.1f} tg")
+            if context.draft_acceptance_rate is not None:
+                perf_parts.append(f"{context.draft_acceptance_rate:.0%} ar")
+            if perf_parts:
+                await invoke_on_progress(
+                    self._on_progress,
+                    " · ".join(perf_parts),
+                    perf_hint=True,
+                )
 
     def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
         return self._loop._strip_think(content)
@@ -910,14 +927,6 @@ class AgentLoop:
         finally:
             reset_file_states(file_state_token)
         self._last_usage = result.usage
-        if result.usage:
-            record_usage(
-                usage=result.usage,
-                model=self.model,
-                channel=channel,
-                chat_id=chat_id,
-                session_key=session_key or "",
-            )
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             # Push final content through stream so streaming channels (e.g. Feishu)

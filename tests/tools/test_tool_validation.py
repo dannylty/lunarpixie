@@ -241,7 +241,7 @@ def test_exec_extract_absolute_paths_captures_quoted_paths() -> None:
 
 
 def test_exec_guard_blocks_home_path_outside_workspace(tmp_path) -> None:
-"""Guard is disabled in Docker; skip path blocking tests."""
+    """Guard is disabled in Docker; skip path blocking tests."""
     pytest.skip("Guard disabled in Docker container")
 
 

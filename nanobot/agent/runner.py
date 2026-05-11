@@ -280,6 +280,9 @@ class AgentRunner:
             context.response = response
             context.usage = dict(raw_usage)
             context.tool_calls = list(response.tool_calls)
+            context.prefill_tps = response.prefill_tps
+            context.generation_tps = response.generation_tps
+            context.draft_acceptance_rate = response.draft_acceptance_rate
             self._accumulate_usage(usage, raw_usage)
 
             if response.should_execute_tools:
@@ -425,6 +428,9 @@ class AgentRunner:
                 context.response = response
                 context.usage = dict(raw_usage)
                 context.tool_calls = list(response.tool_calls)
+                context.prefill_tps = response.prefill_tps
+                context.generation_tps = response.generation_tps
+                context.draft_acceptance_rate = response.draft_acceptance_rate
                 clean = hook.finalize_content(context, response.content)
 
             if response.finish_reason == "length" and not is_blank_text(clean):
