@@ -96,6 +96,11 @@ class Session:
         History is sliced by message count first (``max_messages``), then by
         token budget from the tail (``max_tokens``) when provided.
         """
+        # Safety clamp: last_consolidated can drift beyond message count after
+        # file-cap truncation or corruption. Clamp here to guarantee we never
+        # return an empty slice when messages actually exist.
+        if self.last_consolidated > len(self.messages):
+            self.last_consolidated = len(self.messages)
         unconsolidated = self.messages[self.last_consolidated:]
         max_messages = max_messages if max_messages > 0 else 120
         sliced = unconsolidated[-max_messages:]
@@ -369,6 +374,7 @@ class SessionManager:
                     else:
                         messages.append(data)
 
+            last_consolidated = min(last_consolidated, len(messages))
             return Session(
                 key=key,
                 messages=messages,
@@ -427,6 +433,7 @@ class SessionManager:
             if not messages and not metadata:
                 return None
 
+            last_consolidated = min(last_consolidated, len(messages))
             return Session(
                 key=key,
                 messages=messages,
