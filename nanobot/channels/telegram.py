@@ -652,12 +652,18 @@ class TelegramChannel(BaseChannel):
         if len(buf.hints) > window_size:
             buf.hints = buf.hints[-window_size:]
 
-        # Build consolidated text: header + numbered blockquotes
-        numbered = "\n\n".join(
-            f"{idx}. <blockquote expandable>{text}</blockquote>"
+        # Build consolidated text: header + numbered blockquotes.
+        # The number goes INSIDE the blockquote — Telegram renders <blockquote>
+        # as a block-level element, so anything outside it is pushed to its own
+        # line, which looks broken. The hint text is tool-derived and may
+        # contain &, <, > (e.g. `exec` with `&&`, code in edit/grep hints); it
+        # MUST be HTML-escaped or Telegram rejects the whole message with
+        # BadRequest and the consolidated hint silently fails to render.
+        numbered = "\n".join(
+            f"<blockquote expandable>{idx}. {_escape_telegram_html(text)}</blockquote>"
             for idx, text in buf.hints
         )
-        consolidated = f"<b>Tool Hints</b>\n\n{numbered}"
+        consolidated = f"<b>Tool Hints</b>\n{numbered}"
 
         try:
             if buf.message_id is None:
@@ -683,7 +689,28 @@ class TelegramChannel(BaseChannel):
             if self._is_not_modified_error(e):
                 self.logger.debug("Tool hint message already up-to-date for {}", chat_id)
             else:
-                self.logger.warning("Failed to send consolidated tool hint: {}", e)
+                # HTML parse / entity errors must not make hints silently vanish.
+                # Retry once as plain text (no parse_mode) so the hint still shows.
+                self.logger.warning(
+                    "Consolidated tool hint HTML rejected ({}); retrying as plain text", e
+                )
+                plain = "Tool Hints\n" + "\n".join(
+                    f"{idx}. {text}" for idx, text in buf.hints
+                )
+                try:
+                    if buf.message_id is None:
+                        msg = await self._call_with_retry(
+                            self._app.bot.send_message,
+                            chat_id=chat_id, text=plain, **thread_kwargs,
+                        )
+                        buf.message_id = msg.message_id
+                    else:
+                        await self._call_with_retry(
+                            self._app.bot.edit_message_text,
+                            chat_id=chat_id, message_id=buf.message_id, text=plain,
+                        )
+                except Exception:
+                    self.logger.exception("Plain-text tool hint fallback also failed")
         except Exception:
             self.logger.exception("Error sending consolidated tool hint")
 
