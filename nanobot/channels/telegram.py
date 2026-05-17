@@ -737,6 +737,16 @@ class TelegramChannel(BaseChannel):
         stream_id = meta.get("_stream_id")
 
         if meta.get("_stream_end"):
+            # End of a streamed reply. _resuming=False means this is the final
+            # response (no more tool calls). Finalize the consolidated tool hint
+            # here too — the non-streaming send() path is bypassed when
+            # streaming is on, so without this the buffer is never dropped and
+            # the NEXT turn keeps editing the previous hint message with a
+            # continued index. Done before the stream-buf guards/early returns
+            # so it runs regardless of stream-buffer state.
+            if self.config.tool_hint_consolidate and not meta.get("_resuming"):
+                self._finalize_tool_hint(chat_id)
+
             buf = self._stream_bufs.get(chat_id)
             if not buf or not buf.message_id or not buf.text:
                 return
