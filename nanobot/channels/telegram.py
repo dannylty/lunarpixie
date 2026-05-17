@@ -744,8 +744,11 @@ class TelegramChannel(BaseChannel):
             # the NEXT turn keeps editing the previous hint message with a
             # continued index. Done before the stream-buf guards/early returns
             # so it runs regardless of stream-buffer state.
+            # NOTE: key by int_chat_id — send() stores the buffer under
+            # int(msg.chat_id), so finalizing with the str chat_id would pop
+            # the wrong key and leave the buffer alive.
             if self.config.tool_hint_consolidate and not meta.get("_resuming"):
-                self._finalize_tool_hint(chat_id)
+                self._finalize_tool_hint(int_chat_id)
 
             buf = self._stream_bufs.get(chat_id)
             if not buf or not buf.message_id or not buf.text:
