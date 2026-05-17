@@ -228,8 +228,9 @@ class _StreamBuf:
 @dataclass
 class _ToolHintBuf:
     """Per-chat consolidated tool hint buffer with sliding window."""
-    hints: list[str] = field(default_factory=list)
+    hints: list[tuple[int, str]] = field(default_factory=list)
     message_id: int | None = None
+    global_index: int = 0  # monotonic counter for numbering across windows
 
 
 class TelegramConfig(Base):
@@ -646,15 +647,17 @@ class TelegramChannel(BaseChannel):
             self._tool_hint_bufs[chat_id] = buf
 
         window_size = self.config.tool_hint_window_size
-        buf.hints.append(hint)
+        buf.global_index += 1
+        buf.hints.append((buf.global_index, hint))
         if len(buf.hints) > window_size:
             buf.hints = buf.hints[-window_size:]
 
-        # Build consolidated text with expandable blockquotes
-        consolidated = "\n\n".join(
-            f"<blockquote expandable><b>Tool</b>\n{hint}</blockquote>"
-            for hint in buf.hints
+        # Build consolidated text: header + numbered blockquotes
+        numbered = "\n\n".join(
+            f"{idx}. <blockquote expandable>{text}</blockquote>"
+            for idx, text in buf.hints
         )
+        consolidated = f"<b>Tool Hints</b>\n\n{numbered}"
 
         try:
             if buf.message_id is None:
