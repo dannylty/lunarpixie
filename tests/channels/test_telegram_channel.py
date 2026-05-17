@@ -45,8 +45,10 @@ class _FakeUpdater:
 class _FakeBot:
     def __init__(self) -> None:
         self.sent_messages: list[dict] = []
+        self._message_ids: list[int] = []  # parallel to sent_messages
         self.sent_media: list[dict] = []
         self.get_me_calls = 0
+        self.deleted_messages: list[int] = []
 
     async def get_me(self):
         self.get_me_calls += 1
@@ -56,8 +58,22 @@ class _FakeBot:
         self.commands = commands
 
     async def send_message(self, **kwargs):
+        msg_id = len(self.sent_messages) + 1
         self.sent_messages.append(kwargs)
-        return SimpleNamespace(message_id=len(self.sent_messages))
+        self._message_ids.append(msg_id)
+        return SimpleNamespace(message_id=msg_id)
+
+    async def edit_message_text(self, **kwargs) -> None:
+        msg_id = kwargs.get("message_id")
+        for i, mid in enumerate(self._message_ids):
+            if mid == msg_id:
+                self.sent_messages[i]["text"] = kwargs.get(
+                    "text", self.sent_messages[i]["text"]
+                )
+                break
+
+    async def delete_message(self, **kwargs) -> None:
+        self.deleted_messages.append(kwargs.get("message_id"))
 
     async def send_photo(self, **kwargs) -> None:
         self.sent_media.append({"kind": "photo", **kwargs})
@@ -1790,3 +1806,131 @@ async def test_callback_query_ignores_unauthorized_user_before_side_effects() ->
     query.answer.assert_not_awaited()
     query.message.edit_reply_markup.assert_not_awaited()
     channel._handle_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consolidated_tool_hint_sends_single_message() -> None:
+    """Consolidated tool hints send one message that gets edited on subsequent hints."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"],
+            tool_hint_consolidate=True, tool_hint_window_size=3,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    # Send first tool hint
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="exec: ls -la",
+            metadata={"_tool_hint": True},
+        )
+    )
+    assert len(channel._app.bot.sent_messages) == 1
+    assert "exec: ls -la" in channel._app.bot.sent_messages[0]["text"]
+
+    # Send second tool hint — should edit, not send new
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="grep: pattern",
+            metadata={"_tool_hint": True},
+        )
+    )
+    assert len(channel._app.bot.sent_messages) == 1  # still one message
+    assert "exec: ls -la" in channel._app.bot.sent_messages[0]["text"]
+    assert "grep: pattern" in channel._app.bot.sent_messages[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_consolidated_tool_hint_sliding_window() -> None:
+    """Only the last N hints are kept in the consolidated message."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"],
+            tool_hint_consolidate=True, tool_hint_window_size=2,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    for hint in ["hint1", "hint2", "hint3"]:
+        await channel.send(
+            OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content=hint,
+                metadata={"_tool_hint": True},
+            )
+        )
+
+    text = channel._app.bot.sent_messages[0]["text"]
+    assert "hint1" not in text  # evicted from window
+    assert "hint2" in text
+    assert "hint3" in text
+
+
+@pytest.mark.asyncio
+async def test_consolidated_tool_hint_cleared_on_final_message() -> None:
+    """Non-tool-hint messages delete the consolidated tool hint message."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"],
+            tool_hint_consolidate=True, tool_hint_window_size=3,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    # Send tool hint
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="exec: ls",
+            metadata={"_tool_hint": True},
+        )
+    )
+    hint_msg_id = channel._tool_hint_bufs[123].message_id
+
+    # Send final message
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="Here is the result.",
+        )
+    )
+
+    # Tool hint message should be deleted
+    assert hint_msg_id in channel._app.bot.deleted_messages
+    assert len(channel._tool_hint_bufs) == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_hint_consolidate_off_sends_separate_messages() -> None:
+    """When consolidation is disabled, each tool hint is a separate message."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"],
+            tool_hint_consolidate=False,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    for hint in ["hint1", "hint2"]:
+        await channel.send(
+            OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content=hint,
+                metadata={"_tool_hint": True},
+            )
+        )
+
+    assert len(channel._app.bot.sent_messages) == 2

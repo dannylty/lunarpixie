@@ -7,7 +7,7 @@ import re
 import time
 import unicodedata
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -225,6 +225,13 @@ class _StreamBuf:
     stream_id: str | None = None
 
 
+@dataclass
+class _ToolHintBuf:
+    """Per-chat consolidated tool hint buffer with sliding window."""
+    hints: list[str] = field(default_factory=list)
+    message_id: int | None = None
+
+
 class TelegramConfig(Base):
     """Telegram channel configuration."""
 
@@ -241,6 +248,9 @@ class TelegramConfig(Base):
     # Enable inline keyboard buttons in Telegram messages.
     inline_keyboards: bool = False
     stream_edit_interval: float = Field(default=_STREAM_EDIT_INTERVAL_DEFAULT, ge=0.1)
+    # Consolidate tool hints into a single editable message with a sliding window.
+    tool_hint_consolidate: bool = False
+    tool_hint_window_size: int = Field(default=3, ge=1, le=20)
 
 
 class TelegramChannel(BaseChannel):
@@ -284,6 +294,7 @@ class TelegramChannel(BaseChannel):
         self._bot_user_id: int | None = None
         self._bot_username: str | None = None
         self._stream_bufs: dict[str, _StreamBuf] = {}  # chat_id -> streaming state
+        self._tool_hint_bufs: dict[str, _ToolHintBuf] = {}  # chat_id -> consolidated tool hint state
 
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
@@ -526,21 +537,34 @@ class TelegramChannel(BaseChannel):
 
         # Send text content
         if msg.content and msg.content != "[empty message]":
-            render_as_blockquote = bool(msg.metadata.get("_tool_hint")) or bool(msg.metadata.get("_perf_hint"))
-            buttons = getattr(msg, "buttons", None) or []
-            reply_markup = self._build_keyboard(buttons) if buttons else None
-            text = msg.content
-            # Fallback: no native keyboard → splice labels into the message so the choices survive.
-            if buttons and reply_markup is None:
-                text = f"{text}\n\n{self._buttons_as_text(buttons)}"
-            chunks = split_message(text, TELEGRAM_MAX_MESSAGE_LEN)
-            for i, chunk in enumerate(chunks):
-                is_last = (i == len(chunks) - 1)
-                await self._send_text(
-                    chat_id, chunk, reply_params, thread_kwargs,
-                    render_as_blockquote=render_as_blockquote,
-                    reply_markup=reply_markup if is_last else None,
+            is_tool_hint = bool(msg.metadata.get("_tool_hint"))
+            is_perf_hint = bool(msg.metadata.get("_perf_hint"))
+            render_as_blockquote = is_tool_hint or is_perf_hint
+
+            # Handle consolidated tool hints
+            if is_tool_hint and self.config.tool_hint_consolidate:
+                await self._send_consolidated_tool_hint(
+                    chat_id, msg.content, thread_kwargs
                 )
+            else:
+                # Non-tool-hint message: clean up consolidated tool hint if exists
+                if self.config.tool_hint_consolidate:
+                    await self._clear_tool_hint(chat_id)
+
+                buttons = getattr(msg, "buttons", None) or []
+                reply_markup = self._build_keyboard(buttons) if buttons else None
+                text = msg.content
+                # Fallback: no native keyboard → splice labels into the message so the choices survive.
+                if buttons and reply_markup is None:
+                    text = f"{text}\n\n{self._buttons_as_text(buttons)}"
+                chunks = split_message(text, TELEGRAM_MAX_MESSAGE_LEN)
+                for i, chunk in enumerate(chunks):
+                    is_last = (i == len(chunks) - 1)
+                    await self._send_text(
+                        chat_id, chunk, reply_params, thread_kwargs,
+                        render_as_blockquote=render_as_blockquote,
+                        reply_markup=reply_markup if is_last else None,
+                    )
 
     async def _call_with_retry(self, fn, *args, **kwargs):
         """Call an async Telegram API function with retry on pool/network timeout and RetryAfter."""
@@ -601,6 +625,73 @@ class TelegramChannel(BaseChannel):
             except Exception:
                 self.logger.exception("Error sending message")
                 raise
+
+    async def _send_consolidated_tool_hint(
+        self, chat_id: int, hint: str, thread_kwargs: dict[str, Any]
+    ) -> None:
+        """Add a tool hint to the sliding window and send/edit the consolidated message."""
+        if not self._app:
+            return
+
+        buf = self._tool_hint_bufs.get(chat_id)
+        if buf is None:
+            buf = _ToolHintBuf()
+            self._tool_hint_bufs[chat_id] = buf
+
+        window_size = self.config.tool_hint_window_size
+        buf.hints.append(hint)
+        if len(buf.hints) > window_size:
+            buf.hints = buf.hints[-window_size:]
+
+        # Build consolidated text with expandable blockquotes
+        consolidated = "\n\n".join(
+            f"<blockquote expandable><b>Tool</b>\n{hint}</blockquote>"
+            for hint in buf.hints
+        )
+
+        try:
+            if buf.message_id is None:
+                # First hint: send new message
+                msg = await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=chat_id,
+                    text=consolidated,
+                    parse_mode="HTML",
+                    **thread_kwargs,
+                )
+                buf.message_id = msg.message_id
+            else:
+                # Subsequent hints: edit existing message
+                await self._call_with_retry(
+                    self._app.bot.edit_message_text,
+                    chat_id=chat_id,
+                    message_id=buf.message_id,
+                    text=consolidated,
+                    parse_mode="HTML",
+                )
+        except BadRequest as e:
+            if self._is_not_modified_error(e):
+                self.logger.debug("Tool hint message already up-to-date for {}", chat_id)
+            else:
+                self.logger.warning("Failed to send consolidated tool hint: {}", e)
+        except Exception:
+            self.logger.exception("Error sending consolidated tool hint")
+
+    async def _clear_tool_hint(self, chat_id: int) -> None:
+        """Delete the consolidated tool hint message and reset the buffer."""
+        if not self._app:
+            return
+
+        buf = self._tool_hint_bufs.pop(chat_id, None)
+        if buf and buf.message_id:
+            try:
+                await self._call_with_retry(
+                    self._app.bot.delete_message,
+                    chat_id=chat_id,
+                    message_id=buf.message_id,
+                )
+            except Exception:
+                self.logger.exception("Failed to delete tool hint message")
 
     @staticmethod
     def _is_not_modified_error(exc: Exception) -> bool:
