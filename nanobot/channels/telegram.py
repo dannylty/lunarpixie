@@ -663,7 +663,7 @@ class TelegramChannel(BaseChannel):
             f"<blockquote expandable>{idx}. {_escape_telegram_html(text)}</blockquote>"
             for idx, text in buf.hints
         )
-        consolidated = f"<b>Tool Hints</b>\n{numbered}"
+        consolidated = numbered
 
         try:
             if buf.message_id is None:
@@ -694,7 +694,7 @@ class TelegramChannel(BaseChannel):
                 self.logger.warning(
                     "Consolidated tool hint HTML rejected ({}); retrying as plain text", e
                 )
-                plain = "Tool Hints\n" + "\n".join(
+                plain = "\n".join(
                     f"{idx}. {text}" for idx, text in buf.hints
                 )
                 try:
