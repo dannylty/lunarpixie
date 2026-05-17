@@ -649,7 +649,8 @@ class AgentLoop:
         """Format tool calls as concise hints with smart abbreviation."""
         from nanobot.utils.tool_hints import format_tool_hints
 
-        return format_tool_hints(tool_calls, max_length=self.tool_hint_max_length)
+        # max_length=None: never truncate tool calls — show them in full.
+        return format_tool_hints(tool_calls, max_length=None)
 
     async def _build_bus_progress_callback(
         self, msg: InboundMessage
