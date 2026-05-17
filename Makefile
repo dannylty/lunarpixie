@@ -6,10 +6,10 @@ build:
 	docker compose build
 
 up:
-	docker compose up -d
+	docker compose up -d --remove-orphans
 
 down:
-	docker compose down
+	docker compose down --remove-orphans
 
 restart: down build up
 

@@ -741,23 +741,29 @@ class OpenAICompatProvider(LLMProvider):
         return str(value)
 
     @classmethod
-    def _extract_timings(cls, response: Any) -> tuple[float | None, float | None]:
-        """Extract prefill and generation tokens-per-second from llama.cpp timings.
+    def _extract_timings(
+        cls, response: Any
+    ) -> tuple[float | None, float | None, float | None]:
+        """Extract perf metrics from llama.cpp timings.
 
-        Returns (prefill_tps, generation_tps) or (None, None) if not available.
-        llama.cpp reports ``timings.prompt_per_second`` and
-        ``timings.predicted_per_second`` when ``timings_per_token: true`` is set.
+        Returns ``(prefill_tps, generation_tps, draft_acceptance_rate)`` or all
+        ``None`` if not available. llama.cpp reports ``timings.prompt_per_second``
+        and ``timings.predicted_per_second`` when ``timings_per_token: true`` is
+        set. When speculative decoding is active it also reports ``draft_n``
+        (draft tokens proposed) and ``draft_n_accepted`` (accepted); the
+        acceptance rate is their ratio, clamped to ``[0, 1]``.
         """
         response_map = cls._maybe_mapping(response)
         if response_map is None:
-            return None, None
+            return None, None, None
 
         timings = response_map.get("timings")
         if not timings or not isinstance(timings, dict):
-            return None, None
+            return None, None, None
 
         prefill_tps: float | None = None
         generation_tps: float | None = None
+        draft_acceptance_rate: float | None = None
 
         pp = timings.get("prompt_per_second")
         if pp and isinstance(pp, (int, float)) and pp > 0:
@@ -767,7 +773,17 @@ class OpenAICompatProvider(LLMProvider):
         if gp and isinstance(gp, (int, float)) and gp > 0:
             generation_tps = round(gp, 2)
 
-        return prefill_tps, generation_tps
+        draft_n = timings.get("draft_n")
+        draft_accepted = timings.get("draft_n_accepted")
+        if (
+            isinstance(draft_n, (int, float))
+            and draft_n > 0
+            and isinstance(draft_accepted, (int, float))
+            and draft_accepted >= 0
+        ):
+            draft_acceptance_rate = round(min(draft_accepted / draft_n, 1.0), 4)
+
+        return prefill_tps, generation_tps, draft_acceptance_rate
 
     @classmethod
     def _extract_usage(cls, response: Any) -> dict[str, int]:
@@ -900,7 +916,7 @@ class OpenAICompatProvider(LLMProvider):
                     function_provider_specific_fields=fn_prov,
                 ))
 
-            prefill_tps, generation_tps = self._extract_timings(response_map)
+            prefill_tps, generation_tps, draft_ar = self._extract_timings(response_map)
             return LLMResponse(
                 content=content,
                 tool_calls=parsed_tool_calls,
@@ -909,6 +925,7 @@ class OpenAICompatProvider(LLMProvider):
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
                 prefill_tps=prefill_tps,
                 generation_tps=generation_tps,
+                draft_acceptance_rate=draft_ar,
             )
 
         if not response.choices:
@@ -950,7 +967,7 @@ class OpenAICompatProvider(LLMProvider):
         if not reasoning_content and getattr(msg, "reasoning", None):
             reasoning_content = msg.reasoning
 
-        prefill_tps, generation_tps = self._extract_timings(response)
+        prefill_tps, generation_tps, draft_ar = self._extract_timings(response)
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
@@ -959,6 +976,7 @@ class OpenAICompatProvider(LLMProvider):
             reasoning_content=reasoning_content,
             prefill_tps=prefill_tps,
             generation_tps=generation_tps,
+            draft_acceptance_rate=draft_ar,
         )
 
     @classmethod
@@ -1048,14 +1066,17 @@ class OpenAICompatProvider(LLMProvider):
 
         prefill_tps: float | None = None
         generation_tps: float | None = None
+        draft_ar: float | None = None
         for chunk in chunks:
             chunk_map = cls._maybe_mapping(chunk)
             if chunk_map is not None:
-                pt, gt = cls._extract_timings(chunk_map)
+                pt, gt, dar = cls._extract_timings(chunk_map)
                 if pt is not None:
                     prefill_tps = pt
                 if gt is not None:
                     generation_tps = gt
+                if dar is not None:
+                    draft_ar = dar
 
         return LLMResponse(
             content="".join(content_parts) or None,
@@ -1075,6 +1096,7 @@ class OpenAICompatProvider(LLMProvider):
             reasoning_content="".join(reasoning_parts) or None,
             prefill_tps=prefill_tps,
             generation_tps=generation_tps,
+            draft_acceptance_rate=draft_ar,
         )
 
     @classmethod

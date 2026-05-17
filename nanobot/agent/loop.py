@@ -660,11 +660,13 @@ class AgentLoop:
             content: str,
             *,
             tool_hint: bool = False,
+            perf_hint: bool = False,
             tool_events: list[dict[str, Any]] | None = None,
         ) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
             meta["_tool_hint"] = tool_hint
+            meta["_perf_hint"] = perf_hint
             if tool_events:
                 meta["_tool_events"] = tool_events
             await self.bus.publish_outbound(

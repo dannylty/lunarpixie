@@ -65,6 +65,8 @@ class LLMResponse:
     # Performance metrics (tokens per second), populated when the provider reports timings
     prefill_tps: float | None = None
     generation_tps: float | None = None
+    # Speculative-decoding draft acceptance rate (0..1), when the provider reports it
+    draft_acceptance_rate: float | None = None
 
     @property
     def has_tool_calls(self) -> bool:

@@ -539,6 +539,7 @@ class TelegramChannel(BaseChannel):
         if msg.content and msg.content != "[empty message]":
             is_tool_hint = bool(msg.metadata.get("_tool_hint"))
             is_perf_hint = bool(msg.metadata.get("_perf_hint"))
+            is_progress = bool(msg.metadata.get("_progress"))
             render_as_blockquote = is_tool_hint or is_perf_hint
 
             # Handle consolidated tool hints
@@ -547,9 +548,15 @@ class TelegramChannel(BaseChannel):
                     chat_id, msg.content, thread_kwargs
                 )
             else:
-                # Non-tool-hint message: clean up consolidated tool hint if exists
-                if self.config.tool_hint_consolidate:
-                    await self._clear_tool_hint(chat_id)
+                # Only the genuine final reply finalizes the consolidated tool
+                # hint. Interstitial progress messages (perf hints, intermediate
+                # thoughts) carry _progress and must NOT reset the sliding-window
+                # buffer mid-turn — doing so would make every subsequent hint
+                # post a new message instead of editing the consolidated one.
+                # The hint message is left in the chat as a persistent record;
+                # we only drop the buffer so the next turn starts a fresh one.
+                if self.config.tool_hint_consolidate and not is_progress:
+                    self._finalize_tool_hint(chat_id)
 
                 buttons = getattr(msg, "buttons", None) or []
                 reply_markup = self._build_keyboard(buttons) if buttons else None
@@ -677,21 +684,15 @@ class TelegramChannel(BaseChannel):
         except Exception:
             self.logger.exception("Error sending consolidated tool hint")
 
-    async def _clear_tool_hint(self, chat_id: int) -> None:
-        """Delete the consolidated tool hint message and reset the buffer."""
-        if not self._app:
-            return
+    def _finalize_tool_hint(self, chat_id: int) -> None:
+        """Finalize the consolidated tool hint for this turn.
 
-        buf = self._tool_hint_bufs.pop(chat_id, None)
-        if buf and buf.message_id:
-            try:
-                await self._call_with_retry(
-                    self._app.bot.delete_message,
-                    chat_id=chat_id,
-                    message_id=buf.message_id,
-                )
-            except Exception:
-                self.logger.exception("Failed to delete tool hint message")
+        The hint message is intentionally left in the chat as a persistent
+        record of what tools ran. We only drop the per-chat buffer so the
+        next turn's first hint posts a new message instead of editing the
+        previous (now-finalized) one.
+        """
+        self._tool_hint_bufs.pop(chat_id, None)
 
     @staticmethod
     def _is_not_modified_error(exc: Exception) -> bool:
