@@ -278,15 +278,7 @@
             "title": "Ejecutar Dream",
             "description": "Activa manualmente la consolidación de memoria."
           },
-          "dream_log": {
-            "title": "Mostrar registro de Dream",
-            "description": "Muestra qué cambió la última consolidación Dream."
-          },
-          "dream_restore": {
-            "title": "Restaurar memoria",
-            "description": "Revierte la memoria a una instantánea Dream anterior."
-          },
-          "help": {
+            "help": {
             "title": "Mostrar ayuda",
             "description": "Lista los comandos slash disponibles."
           }

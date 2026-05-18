@@ -72,16 +72,10 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "sparkles",
     ),
     BuiltinCommandSpec(
-        "/dream-log",
-        "Show Dream log",
-        "Show what the last Dream consolidation changed.",
-        "book-open",
-    ),
-    BuiltinCommandSpec(
-        "/dream-restore",
-        "Restore memory",
-        "Revert memory to a previous Dream snapshot.",
-        "undo-2",
+        "/clear",
+        "Clear conversation",
+        "Discard the conversation and start fresh (no consolidation).",
+        "eraser",
     ),
     BuiltinCommandSpec(
         "/help",

@@ -278,15 +278,7 @@
             "title": "Dream を実行",
             "description": "メモリ統合を手動で開始します。"
           },
-          "dream_log": {
-            "title": "Dream ログを表示",
-            "description": "直近の Dream 統合で変更された内容を表示します。"
-          },
-          "dream_restore": {
-            "title": "メモリを復元",
-            "description": "以前の Dream スナップショットへメモリを戻します。"
-          },
-          "help": {
+            "help": {
             "title": "ヘルプを表示",
             "description": "利用可能なスラッシュコマンドを一覧表示します。"
           }

@@ -299,14 +299,6 @@
             "title": "Run Dream",
             "description": "Manually trigger memory consolidation."
           },
-          "dream_log": {
-            "title": "Show Dream log",
-            "description": "Show what the last Dream consolidation changed."
-          },
-          "dream_restore": {
-            "title": "Restore memory",
-            "description": "Revert memory to a previous Dream snapshot."
-          },
           "help": {
             "title": "Show help",
             "description": "List available slash commands."

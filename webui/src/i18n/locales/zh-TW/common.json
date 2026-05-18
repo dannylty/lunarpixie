@@ -278,15 +278,7 @@
             "title": "執行 Dream",
             "description": "手動觸發記憶整理。"
           },
-          "dream_log": {
-            "title": "查看 Dream 日誌",
-            "description": "查看上一次 Dream 整理變更了什麼。"
-          },
-          "dream_restore": {
-            "title": "恢復記憶",
-            "description": "將記憶恢復到之前的 Dream 快照。"
-          },
-          "help": {
+            "help": {
             "title": "查看說明",
             "description": "列出可用的斜線命令。"
           }

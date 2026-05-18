@@ -278,15 +278,7 @@
             "title": "Lancer Dream",
             "description": "Déclencher manuellement la consolidation de la mémoire."
           },
-          "dream_log": {
-            "title": "Afficher le journal Dream",
-            "description": "Afficher ce que la dernière consolidation Dream a changé."
-          },
-          "dream_restore": {
-            "title": "Restaurer la mémoire",
-            "description": "Revenir à un instantané Dream précédent."
-          },
-          "help": {
+            "help": {
             "title": "Afficher l’aide",
             "description": "Lister les commandes slash disponibles."
           }

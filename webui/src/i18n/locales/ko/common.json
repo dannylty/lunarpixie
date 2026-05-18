@@ -278,15 +278,7 @@
             "title": "Dream 실행",
             "description": "메모리 정리를 수동으로 트리거합니다."
           },
-          "dream_log": {
-            "title": "Dream 로그 보기",
-            "description": "마지막 Dream 정리에서 변경된 내용을 표시합니다."
-          },
-          "dream_restore": {
-            "title": "메모리 복원",
-            "description": "이전 Dream 스냅샷으로 메모리를 되돌립니다."
-          },
-          "help": {
+            "help": {
             "title": "도움말 보기",
             "description": "사용 가능한 슬래시 명령을 나열합니다."
           }

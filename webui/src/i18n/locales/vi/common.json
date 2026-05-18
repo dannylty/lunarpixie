@@ -278,15 +278,7 @@
             "title": "Chạy Dream",
             "description": "Kích hoạt thủ công quá trình hợp nhất bộ nhớ."
           },
-          "dream_log": {
-            "title": "Hiển thị nhật ký Dream",
-            "description": "Hiển thị những gì lần hợp nhất Dream gần nhất đã thay đổi."
-          },
-          "dream_restore": {
-            "title": "Khôi phục bộ nhớ",
-            "description": "Đưa bộ nhớ về một snapshot Dream trước đó."
-          },
-          "help": {
+            "help": {
             "title": "Hiển thị trợ giúp",
             "description": "Liệt kê các lệnh slash có sẵn."
           }

@@ -120,12 +120,8 @@ Memory is not hidden behind the curtain. Users can inspect and guide it.
 | Command | What it does |
 |---------|--------------|
 | `/dream` | Run Dream immediately |
-| `/dream-log` | Show the latest Dream memory change |
-| `/dream-log <sha>` | Show a specific Dream change |
-| `/dream-restore` | List recent Dream memory versions |
-| `/dream-restore <sha>` | Restore memory to the state before a specific change |
 
-These commands exist for a reason: automatic memory is powerful, but users should always retain the right to inspect, understand, and restore it.
+Memory changes are tracked via git commits in the workspace, so you can always inspect `git log` on memory files to see what changed and when.
 
 ## Versioned Memory
 

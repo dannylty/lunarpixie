@@ -278,15 +278,7 @@
             "title": "Jalankan Dream",
             "description": "Picu konsolidasi memori secara manual."
           },
-          "dream_log": {
-            "title": "Tampilkan log Dream",
-            "description": "Tampilkan perubahan dari konsolidasi Dream terakhir."
-          },
-          "dream_restore": {
-            "title": "Pulihkan memori",
-            "description": "Kembalikan memori ke snapshot Dream sebelumnya."
-          },
-          "help": {
+            "help": {
             "title": "Tampilkan bantuan",
             "description": "Daftar perintah slash yang tersedia."
           }

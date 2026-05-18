@@ -8,11 +8,9 @@ These commands work inside chat channels and interactive agent sessions:
 | `/stop` | Stop the current task |
 | `/restart` | Restart the bot |
 | `/status` | Show bot status |
+| `/history [n]` | Show the last N conversation messages (default 10, max 50) |
 | `/dream` | Run Dream memory consolidation now |
-| `/dream-log` | Show the latest Dream memory change |
-| `/dream-log <sha>` | Show a specific Dream memory change |
-| `/dream-restore` | List recent Dream memory versions |
-| `/dream-restore <sha>` | Restore memory to the state before a specific change |
+| `/clear` | Discard conversation and start fresh (no consolidation) |
 | `/help` | Show available in-chat commands |
 
 ## Periodic Tasks
