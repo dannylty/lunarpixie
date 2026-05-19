@@ -14,7 +14,6 @@ from nanobot.utils.helpers import (
     build_assistant_message,
     current_time_str,
     detect_image_mime,
-    truncate_text,
 )
 from nanobot.utils.prompt_templates import render_template
 
@@ -24,8 +23,6 @@ class ContextBuilder:
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
-    _MAX_RECENT_HISTORY = 50
-    _MAX_HISTORY_CHARS = 32_000  # hard cap on recent history section size
     _RUNTIME_CONTEXT_END = "[/Runtime Context]"
 
     def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
@@ -61,15 +58,6 @@ class ContextBuilder:
         skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
-
-        entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
-        if entries:
-            capped = entries[-self._MAX_RECENT_HISTORY:]
-            history_text = "\n".join(
-                f"- [{e['timestamp']}] {e['content']}" for e in capped
-            )
-            history_text = truncate_text(history_text, self._MAX_HISTORY_CHARS)
-            parts.append("# Recent History\n\n" + history_text)
 
         if session_summary:
             parts.append(f"[Archived Context Summary]\n\n{session_summary}")
