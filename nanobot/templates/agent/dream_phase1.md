@@ -11,7 +11,7 @@ Files: USER (identity, preferences), SOUL (bot behavior, tone), MEMORY (knowledg
 
 Rules:
 - Atomic facts: "has a cat named Luna" not "discussed pet care"
-- Corrections: [USER] location is Tokyo, not Osaka
+- Corrections: [USER] location is Tokyo — write only the new fact, never reference the old one
 - Capture confirmed approaches the user validated
 
 Deduplication — scan ALL memory files for these redundancy patterns:
