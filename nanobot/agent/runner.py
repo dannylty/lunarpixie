@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -283,6 +284,7 @@ class AgentRunner:
             context.prefill_tps = response.prefill_tps
             context.generation_tps = response.generation_tps
             context.draft_acceptance_rate = response.draft_acceptance_rate
+            context.response_time_s = response.response_time_s
             self._accumulate_usage(usage, raw_usage)
 
             if response.should_execute_tools:
@@ -431,6 +433,7 @@ class AgentRunner:
                 context.prefill_tps = response.prefill_tps
                 context.generation_tps = response.generation_tps
                 context.draft_acceptance_rate = response.draft_acceptance_rate
+                context.response_time_s = response.response_time_s
                 clean = hook.finalize_content(context, response.content)
 
             if response.finish_reason == "length" and not is_blank_text(clean):
@@ -659,16 +662,20 @@ class AgentRunner:
         else:
             coro = self.provider.chat_with_retry(**kwargs)
 
+        t0 = time.monotonic()
         if timeout_s is None:
-            return await coro
-        try:
-            return await asyncio.wait_for(coro, timeout=timeout_s)
-        except asyncio.TimeoutError:
-            return LLMResponse(
-                content=f"Error calling LLM: timed out after {timeout_s:g}s",
-                finish_reason="error",
-                error_kind="timeout",
-            )
+            response = await coro
+        else:
+            try:
+                response = await asyncio.wait_for(coro, timeout=timeout_s)
+            except asyncio.TimeoutError:
+                response = LLMResponse(
+                    content=f"Error calling LLM: timed out after {timeout_s:g}s",
+                    finish_reason="error",
+                    error_kind="timeout",
+                )
+        response.response_time_s = round(time.monotonic() - t0, 2)
+        return response
 
     async def _request_finalization_retry(
         self,

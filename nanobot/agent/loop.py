@@ -191,6 +191,8 @@ class _LoopHook(AgentHook):
                 perf_parts.append(f"{context.generation_tps:.1f} tg")
             if context.draft_acceptance_rate is not None:
                 perf_parts.append(f"{context.draft_acceptance_rate:.0%} ar")
+            if context.response_time_s is not None:
+                perf_parts.append(f"{context.response_time_s:.1f} s")
             if perf_parts:
                 await invoke_on_progress(
                     self._on_progress,

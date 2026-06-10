@@ -28,6 +28,7 @@ class AgentHookContext:
     prefill_tps: float | None = None
     generation_tps: float | None = None
     draft_acceptance_rate: float | None = None
+    response_time_s: float | None = None
     # Thinking performance tracking
     thinking_start_time: float | None = None
     thinking_end_time: float | None = None

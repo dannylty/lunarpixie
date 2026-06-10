@@ -67,6 +67,8 @@ class LLMResponse:
     generation_tps: float | None = None
     # Speculative-decoding draft acceptance rate (0..1), when the provider reports it
     draft_acceptance_rate: float | None = None
+    # Total wall-clock response time in seconds, set by the runner
+    response_time_s: float | None = None
 
     @property
     def has_tool_calls(self) -> bool:
