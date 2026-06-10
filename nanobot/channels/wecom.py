@@ -292,18 +292,17 @@ class WecomChannel(BaseChannel):
                 file_info = body.get("file", {})
                 file_url = file_info.get("url", "")
                 aes_key = file_info.get("aeskey", "")
-                file_name = file_info.get("name") or None
+                file_name = file_info.get("name", "unknown")
 
                 if file_url and aes_key:
                     file_path = await self._download_and_save_media(file_url, aes_key, "file", file_name)
                     if file_path:
-                        display_name = os.path.basename(file_path)
-                        content_parts.append(f"[file: {display_name}]")
+                        content_parts.append(f"[file: {file_name}]")
                         media_paths.append(file_path)
                     else:
-                        content_parts.append(f"[file: {file_name or 'unknown'}: download failed]")
+                        content_parts.append(f"[file: {file_name}: download failed]")
                 else:
-                    content_parts.append(f"[file: {file_name or 'unknown'}: download failed]")
+                    content_parts.append(f"[file: {file_name}: download failed]")
 
             elif msg_type == "mixed":
                 # Mixed content contains multiple message items

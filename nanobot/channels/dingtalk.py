@@ -160,7 +160,6 @@ class DingTalkConfig(Base):
     allow_from: list[str] = Field(default_factory=list)
     allow_remote_media_redirects: bool = False
     remote_media_redirect_allowed_hosts: list[str] = Field(default_factory=list)
-    group_user_isolation: bool = False  # If True, each user in group chat gets their own session
 
 
 class DingTalkChannel(BaseChannel):
@@ -694,9 +693,6 @@ class DingTalkChannel(BaseChannel):
             self.logger.info("inbound: {} from {}", content, sender_name)
             is_group = conversation_type == "2" and conversation_id
             chat_id = f"group:{conversation_id}" if is_group else sender_id
-            session_key = None
-            if is_group and self.config.group_user_isolation:
-                session_key = f"{self.name}:group:{conversation_id}:{sender_id}"
             await self._handle_message(
                 sender_id=sender_id,
                 chat_id=chat_id,
@@ -706,7 +702,6 @@ class DingTalkChannel(BaseChannel):
                     "platform": "dingtalk",
                     "conversation_type": conversation_type,
                 },
-                session_key=session_key,
             )
         except Exception:
             self.logger.exception("Error publishing message")

@@ -7,12 +7,11 @@ import re
 import time
 import unicodedata
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field
 from telegram import (
     BotCommand,
     InlineKeyboardButton,
@@ -227,13 +226,11 @@ class _StreamBuf:
 
 
 @dataclass
-class _QueuedTelegramUpdate:
-    """Telegram update staged for per-session ordered processing."""
-
-    kind: Literal["command", "message"]
-    update: Update
-    context: Any
-    sort_key: tuple[int, int]
+class _ToolHintBuf:
+    """Per-chat consolidated tool hint buffer with sliding window."""
+    hints: list[tuple[int, str]] = field(default_factory=list)
+    message_id: int | None = None
+    global_index: int = 0  # monotonic counter for numbering across windows
 
 
 class TelegramConfig(Base):
@@ -241,7 +238,6 @@ class TelegramConfig(Base):
 
     enabled: bool = False
     token: str = ""
-    mode: Literal["polling", "webhook"] = "polling"
     allow_from: list[str] = Field(default_factory=list)
     proxy: str | None = None
     reply_to_message: bool = False
@@ -253,48 +249,16 @@ class TelegramConfig(Base):
     # Enable inline keyboard buttons in Telegram messages.
     inline_keyboards: bool = False
     stream_edit_interval: float = Field(default=_STREAM_EDIT_INTERVAL_DEFAULT, ge=0.1)
-    webhook_url: str = ""
-    webhook_listen_host: str = "127.0.0.1"
-    webhook_listen_port: int = Field(default=8081, ge=1, le=65535)
-    webhook_path: str = "/telegram"
-    webhook_secret_token: str = ""
-    webhook_max_connections: int = Field(default=4, ge=1, le=100)
-
-    @field_validator("webhook_path")
-    @classmethod
-    def webhook_path_must_start_with_slash(cls, value: str) -> str:
-        value = value.strip() or "/telegram"
-        if not value.startswith("/"):
-            raise ValueError('webhook_path must start with "/"')
-        return value
-
-    @model_validator(mode="after")
-    def validate_webhook_config(self) -> "TelegramConfig":
-        if self.mode != "webhook":
-            return self
-
-        url = self.webhook_url.strip()
-        if not url:
-            raise ValueError("webhook_url is required when Telegram mode is webhook")
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or not parsed.netloc:
-            raise ValueError("webhook_url must be a public HTTPS URL")
-        secret = self.webhook_secret_token.strip()
-        if not secret:
-            raise ValueError("webhook_secret_token is required when Telegram mode is webhook")
-        if len(secret) > 256 or re.match(r"^[A-Za-z0-9_-]+$", secret) is None:
-            raise ValueError(
-                "webhook_secret_token must be 1-256 characters using only A-Z, a-z, 0-9, _ and -"
-            )
-        return self
+    # Consolidate tool hints into a single editable message with a sliding window.
+    tool_hint_consolidate: bool = False
+    tool_hint_window_size: int = Field(default=3, ge=1, le=20)
 
 
 class TelegramChannel(BaseChannel):
     """
-    Telegram channel using long polling or webhook mode.
+    Telegram channel using long polling.
 
-    Long polling is the default. Webhook mode requires a public HTTPS URL and a
-    Telegram secret token.
+    Simple and reliable - no webhook/public IP needed.
     """
 
     name = "telegram"
@@ -308,21 +272,10 @@ class TelegramChannel(BaseChannel):
         BotCommand("restart", "Restart the bot"),
         BotCommand("status", "Show bot status"),
         BotCommand("history", "Show recent conversation messages"),
-        BotCommand("goal", "Start a sustained objective (long-running task)"),
-        BotCommand("pairing", "Manage DM pairing (approve/deny/list)"),
-        BotCommand("model", "Switch runtime model preset"),
-        BotCommand("skill", "List enabled skills"),
         BotCommand("dream", "Run Dream memory consolidation now"),
-        BotCommand("dream_log", "Show the latest Dream memory change"),
-        BotCommand("dream_restore", "Restore Dream memory to an earlier version"),
+        BotCommand("clear", "Discard conversation and start fresh"),
         BotCommand("help", "Show available commands"),
     ]
-
-    # Regex for slash commands routed to AgentLoop via ``_forward_command``.
-    # Hyphenated ``dream-*`` commands stay on a separate handler (below).
-    TELEGRAM_BUS_SLASH_COMMAND_RE = re.compile(
-        r"^/(?:new|stop|restart|status|dream|history|goal|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
-    )
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:
@@ -342,8 +295,7 @@ class TelegramChannel(BaseChannel):
         self._bot_user_id: int | None = None
         self._bot_username: str | None = None
         self._stream_bufs: dict[str, _StreamBuf] = {}  # chat_id -> streaming state
-        self._inbound_buffers: dict[str, list[_QueuedTelegramUpdate]] = {}
-        self._inbound_workers: dict[str, asyncio.Task] = {}
+        self._tool_hint_bufs: dict[str, _ToolHintBuf] = {}  # chat_id -> consolidated tool hint state
 
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
@@ -364,19 +316,8 @@ class TelegramChannel(BaseChannel):
 
         return sid in allow_list or username in allow_list
 
-    @staticmethod
-    def _normalize_telegram_command(content: str) -> str:
-        """Map Telegram-safe command aliases back to canonical nanobot commands."""
-        if not content.startswith("/"):
-            return content
-        if content == "/dream_log" or content.startswith("/dream_log "):
-            return content.replace("/dream_log", "/dream-log", 1)
-        if content == "/dream_restore" or content.startswith("/dream_restore "):
-            return content.replace("/dream_restore", "/dream-restore", 1)
-        return content
-
     async def start(self) -> None:
-        """Start the Telegram bot."""
+        """Start the Telegram bot with long polling."""
         if not self.config.token:
             self.logger.error("bot token not configured")
             return
@@ -413,13 +354,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(MessageHandler(filters.Regex(r"^/start(?:@\w+)?$"), self._on_start))
         self._app.add_handler(
             MessageHandler(
-                filters.Regex(TelegramChannel.TELEGRAM_BUS_SLASH_COMMAND_RE),
-                self._forward_command,
-            )
-        )
-        self._app.add_handler(
-            MessageHandler(
-                filters.Regex(r"^/(dream-log|dream_log|dream-restore|dream_restore)(?:@\w+)?(?:\s+.*)?$"),
+                filters.Regex(r"^/(new|stop|restart|status|dream|clear|history)(?:@\w+)?(?:\s+.*)?$"),
                 self._forward_command,
             )
         )
@@ -444,12 +379,9 @@ class TelegramChannel(BaseChannel):
         else:
             allowed_updates = ["message"]
 
-        if self.config.mode == "webhook":
-            self.logger.info("Starting bot (webhook mode)...")
-        else:
-            self.logger.info("Starting bot (polling mode)...")
+        self.logger.info("Starting bot (polling mode)...")
 
-        # Initialize and start receiving updates
+        # Initialize and start polling
         await self._app.initialize()
         await self._app.start()
 
@@ -465,26 +397,12 @@ class TelegramChannel(BaseChannel):
         except Exception as e:
             self.logger.warning("Failed to register bot commands: {}", e)
 
-        if self.config.mode == "webhook":
-            # ``url_path`` is the local HTTP route. ``webhook_url`` is the
-            # public HTTPS URL Telegram calls; reverse proxies may rewrite it.
-            await self._app.updater.start_webhook(
-                listen=self.config.webhook_listen_host,
-                port=self.config.webhook_listen_port,
-                url_path=self.config.webhook_path.lstrip("/"),
-                webhook_url=self.config.webhook_url.strip(),
-                allowed_updates=allowed_updates,
-                drop_pending_updates=False,
-                secret_token=self.config.webhook_secret_token.strip(),
-                max_connections=self.config.webhook_max_connections,
-            )
-        else:
-            # Start polling (this runs until stopped)
-            await self._app.updater.start_polling(
-                allowed_updates=allowed_updates,
-                drop_pending_updates=False,  # Process pending messages on startup
-                error_callback=self._on_polling_error,
-            )
+        # Start polling (this runs until stopped)
+        await self._app.updater.start_polling(
+            allowed_updates=allowed_updates,
+            drop_pending_updates=False,  # Process pending messages on startup
+            error_callback=self._on_polling_error,
+        )
 
         # Keep running until stopped
         while self._running:
@@ -502,11 +420,6 @@ class TelegramChannel(BaseChannel):
             task.cancel()
         self._media_group_tasks.clear()
         self._media_group_buffers.clear()
-
-        for task in self._inbound_workers.values():
-            task.cancel()
-        self._inbound_workers.clear()
-        self._inbound_buffers.clear()
 
         if self._app:
             self.logger.info("Stopping bot...")
@@ -625,21 +538,41 @@ class TelegramChannel(BaseChannel):
 
         # Send text content
         if msg.content and msg.content != "[empty message]":
-            render_as_blockquote = bool(msg.metadata.get("_tool_hint"))
-            buttons = getattr(msg, "buttons", None) or []
-            reply_markup = self._build_keyboard(buttons) if buttons else None
-            text = msg.content
-            # Fallback: no native keyboard → splice labels into the message so the choices survive.
-            if buttons and reply_markup is None:
-                text = f"{text}\n\n{self._buttons_as_text(buttons)}"
-            chunks = split_message(text, TELEGRAM_MAX_MESSAGE_LEN)
-            for i, chunk in enumerate(chunks):
-                is_last = (i == len(chunks) - 1)
-                await self._send_text(
-                    chat_id, chunk, reply_params, thread_kwargs,
-                    render_as_blockquote=render_as_blockquote,
-                    reply_markup=reply_markup if is_last else None,
+            is_tool_hint = bool(msg.metadata.get("_tool_hint"))
+            is_perf_hint = bool(msg.metadata.get("_perf_hint"))
+            is_progress = bool(msg.metadata.get("_progress"))
+            render_as_blockquote = is_tool_hint or is_perf_hint
+
+            # Handle consolidated tool hints
+            if is_tool_hint and self.config.tool_hint_consolidate:
+                await self._send_consolidated_tool_hint(
+                    chat_id, msg.content, thread_kwargs
                 )
+            else:
+                # Only the genuine final reply finalizes the consolidated tool
+                # hint. Interstitial progress messages (perf hints, intermediate
+                # thoughts) carry _progress and must NOT reset the sliding-window
+                # buffer mid-turn — doing so would make every subsequent hint
+                # post a new message instead of editing the consolidated one.
+                # The hint message is left in the chat as a persistent record;
+                # we only drop the buffer so the next turn starts a fresh one.
+                if self.config.tool_hint_consolidate and not is_progress:
+                    self._finalize_tool_hint(chat_id)
+
+                buttons = getattr(msg, "buttons", None) or []
+                reply_markup = self._build_keyboard(buttons) if buttons else None
+                text = msg.content
+                # Fallback: no native keyboard → splice labels into the message so the choices survive.
+                if buttons and reply_markup is None:
+                    text = f"{text}\n\n{self._buttons_as_text(buttons)}"
+                chunks = split_message(text, TELEGRAM_MAX_MESSAGE_LEN)
+                for i, chunk in enumerate(chunks):
+                    is_last = (i == len(chunks) - 1)
+                    await self._send_text(
+                        chat_id, chunk, reply_params, thread_kwargs,
+                        render_as_blockquote=render_as_blockquote,
+                        reply_markup=reply_markup if is_last else None,
+                    )
 
     async def _call_with_retry(self, fn, *args, **kwargs):
         """Call an async Telegram API function with retry on pool/network timeout and RetryAfter."""
@@ -701,6 +634,96 @@ class TelegramChannel(BaseChannel):
                 self.logger.exception("Error sending message")
                 raise
 
+    async def _send_consolidated_tool_hint(
+        self, chat_id: int, hint: str, thread_kwargs: dict[str, Any]
+    ) -> None:
+        """Add a tool hint to the sliding window and send/edit the consolidated message."""
+        if not self._app:
+            return
+
+        buf = self._tool_hint_bufs.get(chat_id)
+        if buf is None:
+            buf = _ToolHintBuf()
+            self._tool_hint_bufs[chat_id] = buf
+
+        window_size = self.config.tool_hint_window_size
+        buf.global_index += 1
+        buf.hints.append((buf.global_index, hint))
+        if len(buf.hints) > window_size:
+            buf.hints = buf.hints[-window_size:]
+
+        # Build consolidated text: header + numbered blockquotes.
+        # The number goes INSIDE the blockquote — Telegram renders <blockquote>
+        # as a block-level element, so anything outside it is pushed to its own
+        # line, which looks broken. The hint text is tool-derived and may
+        # contain &, <, > (e.g. `exec` with `&&`, code in edit/grep hints); it
+        # MUST be HTML-escaped or Telegram rejects the whole message with
+        # BadRequest and the consolidated hint silently fails to render.
+        numbered = "\n".join(
+            f"<blockquote expandable>{idx}. {_escape_telegram_html(text)}</blockquote>"
+            for idx, text in buf.hints
+        )
+        consolidated = numbered
+
+        try:
+            if buf.message_id is None:
+                # First hint: send new message
+                msg = await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=chat_id,
+                    text=consolidated,
+                    parse_mode="HTML",
+                    **thread_kwargs,
+                )
+                buf.message_id = msg.message_id
+            else:
+                # Subsequent hints: edit existing message
+                await self._call_with_retry(
+                    self._app.bot.edit_message_text,
+                    chat_id=chat_id,
+                    message_id=buf.message_id,
+                    text=consolidated,
+                    parse_mode="HTML",
+                )
+        except BadRequest as e:
+            if self._is_not_modified_error(e):
+                self.logger.debug("Tool hint message already up-to-date for {}", chat_id)
+            else:
+                # HTML parse / entity errors must not make hints silently vanish.
+                # Retry once as plain text (no parse_mode) so the hint still shows.
+                self.logger.warning(
+                    "Consolidated tool hint HTML rejected ({}); retrying as plain text", e
+                )
+                plain = "\n".join(
+                    f"{idx}. {text}" for idx, text in buf.hints
+                )
+                try:
+                    if buf.message_id is None:
+                        msg = await self._call_with_retry(
+                            self._app.bot.send_message,
+                            chat_id=chat_id, text=plain, **thread_kwargs,
+                        )
+                        buf.message_id = msg.message_id
+                    else:
+                        await self._call_with_retry(
+                            self._app.bot.edit_message_text,
+                            chat_id=chat_id, message_id=buf.message_id, text=plain,
+                        )
+                except Exception:
+                    self.logger.exception("Plain-text tool hint fallback also failed")
+        except Exception:
+            self.logger.exception("Error sending consolidated tool hint")
+
+    def _finalize_tool_hint(self, chat_id: int) -> None:
+        """Finalize the consolidated tool hint for this turn.
+
+        The hint message is intentionally left in the chat as a persistent
+        record of what tools ran. We only drop the per-chat buffer so the
+        next turn's first hint posts a new message instead of editing the
+        previous (now-finalized) one.
+        """
+        self._tool_hint_bufs.pop(chat_id, None)
+
     @staticmethod
     def _is_not_modified_error(exc: Exception) -> bool:
         return isinstance(exc, BadRequest) and "message is not modified" in str(exc).lower()
@@ -714,6 +737,19 @@ class TelegramChannel(BaseChannel):
         stream_id = meta.get("_stream_id")
 
         if meta.get("_stream_end"):
+            # End of a streamed reply. _resuming=False means this is the final
+            # response (no more tool calls). Finalize the consolidated tool hint
+            # here too — the non-streaming send() path is bypassed when
+            # streaming is on, so without this the buffer is never dropped and
+            # the NEXT turn keeps editing the previous hint message with a
+            # continued index. Done before the stream-buf guards/early returns
+            # so it runs regardless of stream-buffer state.
+            # NOTE: key by int_chat_id — send() stores the buffer under
+            # int(msg.chat_id), so finalizing with the str chat_id would pop
+            # the wrong key and leave the buffer alive.
+            if self.config.tool_hint_consolidate and not meta.get("_resuming"):
+                self._finalize_tool_hint(int_chat_id)
+
             buf = self._stream_bufs.get(chat_id)
             if not buf or not buf.message_id or not buf.text:
                 return
@@ -870,9 +906,7 @@ class TelegramChannel(BaseChannel):
             return
 
         user = update.effective_user
-        sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, update.message, user)
+        if not self.is_allowed(self._sender_id(user)):
             return
         await update.message.reply_text(
             f"👋 Hi {user.first_name}! I'm nanobot.\n\n"
@@ -884,10 +918,7 @@ class TelegramChannel(BaseChannel):
         """Handle /help command for allowed users only."""
         if not update.message or not update.effective_user:
             return
-        user = update.effective_user
-        sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, update.message, user)
+        if not self.is_allowed(self._sender_id(update.effective_user)):
             return
         await update.message.reply_text(build_help_text())
 
@@ -896,17 +927,6 @@ class TelegramChannel(BaseChannel):
         """Build sender_id with username for allowlist matching."""
         sid = str(user.id)
         return f"{sid}|{user.username}" if user.username else sid
-
-    async def _send_pairing_code_if_private(self, sender_id: str, message, user) -> None:
-        if message.chat.type != "private":
-            return
-        await self._handle_message(
-            sender_id=sender_id,
-            chat_id=str(message.chat_id),
-            content="",
-            metadata=self._build_message_metadata(message, user),
-            is_dm=True,
-        )
 
     @staticmethod
     def _derive_topic_session_key(message) -> str | None:
@@ -1083,90 +1103,14 @@ class TelegramChannel(BaseChannel):
         if len(self._message_threads) > 1000:
             self._message_threads.pop(next(iter(self._message_threads)))
 
-    @staticmethod
-    def _queue_key_for_message(message) -> str:
-        """Return the final nanobot session key used for ordered Telegram ingress."""
-        return TelegramChannel._derive_topic_session_key(message) or f"telegram:{message.chat_id}"
-
-    @staticmethod
-    def _sort_key_for_update(update: Update) -> tuple[int, int]:
-        """Sort by chat message id first, then Telegram update id."""
-        message = getattr(update, "message", None)
-        message_id = int(getattr(message, "message_id", 0) or 0)
-        update_id = int(getattr(update, "update_id", 0) or 0)
-        return (message_id, update_id)
-
-    def _enqueue_ordered_update(
-        self,
-        *,
-        kind: Literal["command", "message"],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-    ) -> None:
-        """Stage a Telegram update behind a short per-session reorder window."""
-        message = update.message
-        key = self._queue_key_for_message(message)
-        self._inbound_buffers.setdefault(key, []).append(
-            _QueuedTelegramUpdate(
-                kind=kind,
-                update=update,
-                context=context,
-                sort_key=self._sort_key_for_update(update),
-            )
-        )
-        if key not in self._inbound_workers:
-            self._inbound_workers[key] = asyncio.create_task(
-                self._drain_ordered_updates(key)
-            )
-
-    async def _drain_ordered_updates(self, key: str) -> None:
-        """Drain one Telegram session buffer in stable message order."""
-        try:
-            while self._running:
-                await asyncio.sleep(0.2)
-                batch = self._inbound_buffers.get(key, [])
-                if not batch:
-                    break
-                self._inbound_buffers[key] = []
-                batch.sort(key=lambda item: item.sort_key)
-                for item in batch:
-                    try:
-                        if item.kind == "command":
-                            await self._process_forward_command(item.update, item.context)
-                        else:
-                            await self._process_message_update(item.update, item.context)
-                    except Exception as e:
-                        self.logger.warning(
-                            "Telegram queued update handling failed for {}: {}",
-                            key,
-                            e,
-                        )
-            if not self._inbound_buffers.get(key):
-                self._inbound_buffers.pop(key, None)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            self.logger.warning("Telegram ordered update worker failed for {}: {}", key, e)
-        finally:
-            if not self._inbound_buffers.get(key):
-                self._inbound_workers.pop(key, None)
-
     async def _forward_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Forward slash commands to the bus for unified handling in AgentLoop."""
         if not update.message or not update.effective_user:
             return
-        if not self._running:
-            await self._process_forward_command(update, context)
-            return
-        self._enqueue_ordered_update(kind="command", update=update, context=context)
-
-    async def _process_forward_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Process a queued slash command."""
         message = update.message
         user = update.effective_user
         sender_id = self._sender_id(user)
         if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, message, user)
             return
         self._remember_thread_context(message)
 
@@ -1176,7 +1120,6 @@ class TelegramChannel(BaseChannel):
             cmd_part, *rest = content.split(" ", 1)
             cmd_part = cmd_part.split("@")[0]
             content = f"{cmd_part} {rest[0]}" if rest else cmd_part
-        content = self._normalize_telegram_command(content)
 
         await self._handle_message(
             sender_id=sender_id,
@@ -1184,27 +1127,18 @@ class TelegramChannel(BaseChannel):
             content=content,
             metadata=self._build_message_metadata(message, user),
             session_key=self._derive_topic_session_key(message),
-            is_dm=message.chat.type == "private",
         )
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming messages (text, photos, voice, documents)."""
         if not update.message or not update.effective_user:
             return
-        if not self._running:
-            await self._process_message_update(update, context)
-            return
-        self._enqueue_ordered_update(kind="message", update=update, context=context)
-
-    async def _process_message_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Process a queued Telegram message update."""
 
         message = update.message
         user = update.effective_user
         chat_id = message.chat_id
         sender_id = self._sender_id(user)
         if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, message, user)
             return
         self._remember_thread_context(message)
 

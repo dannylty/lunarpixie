@@ -10,11 +10,10 @@ import pydantic
 from loguru import logger
 from pydantic import BaseModel
 
-from nanobot.config.schema import Config, _resolve_tool_config_refs
+from nanobot.config.schema import Config
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
-_schema_refs_ready = False
 
 
 def set_config_path(path: Path) -> None:
@@ -24,10 +23,17 @@ def set_config_path(path: Path) -> None:
 
 
 def get_config_path() -> Path:
-    """Get the configuration file path."""
+    """Get the configuration file path.
+
+    Defaults to ``<workspace>/.nanobot/config.json``. With the default workspace
+    of ``$HOME``, this resolves to ``~/.nanobot/config.json`` — matching the
+    pre-unification location, so existing installs are picked up unchanged.
+    """
     if _current_config_path:
         return _current_config_path
-    return Path.home() / ".nanobot" / "config.json"
+    from nanobot.config.paths import get_data_dir
+
+    return get_data_dir() / "config.json"
 
 
 def load_config(config_path: Path | None = None) -> Config:
@@ -40,11 +46,6 @@ def load_config(config_path: Path | None = None) -> Config:
     Returns:
         Loaded configuration object.
     """
-    global _schema_refs_ready
-    if not _schema_refs_ready:
-        _resolve_tool_config_refs()
-        _schema_refs_ready = True
-
     path = config_path or get_config_path()
 
     config = Config()
@@ -92,9 +93,10 @@ _ENV_REF_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 def resolve_config_env_vars(config: Config) -> Config:
     """Return *config* with ``${VAR}`` env-var references resolved.
 
-    Walks in place so fields declared with ``exclude=True`` survive;
-    returns the same instance when no references are present.
-    Raises ``ValueError`` if a referenced variable is not set.
+    Walks in place so fields declared with ``exclude=True`` (e.g.
+    ``DreamConfig.cron``) survive; returns the same instance when no
+    references are present. Raises ``ValueError`` if a referenced
+    variable is not set.
     """
     return _resolve_in_place(config)
 

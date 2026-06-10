@@ -11,10 +11,9 @@ _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "read_file":  (["path", "file_path"],              "read {}",     True,  False),
     "write_file": (["path", "file_path"],              "write {}",    True,  False),
     "edit":       (["file_path", "path"],              "edit {}",     True,  False),
-    "find_files": (["query", "glob", "path"],           "find {}",     False, False),
+    "glob":       (["pattern"],                        'glob "{}"',   False, False),
     "grep":       (["pattern"],                        'grep "{}"',   False, False),
     "exec":       (["command"],                        "$ {}",        False, True),
-    "list_exec_sessions": ([],                          "exec sessions", False, False),
     "web_search": (["query"],                          'search "{}"', False, False),
     "web_fetch":  (["url"],                            "fetch {}",    True,  False),
     "list_dir":   (["path"],                           "ls {}",       True,  False),
@@ -28,8 +27,12 @@ _PATH_IN_CMD_RE = re.compile(
 )
 
 
-def format_tool_hints(tool_calls: list, max_length: int = 40) -> str:
-    """Format tool calls as concise hints with smart abbreviation."""
+def format_tool_hints(tool_calls: list, max_length: int | None = 40) -> str:
+    """Format tool calls as concise hints with smart abbreviation.
+
+    ``max_length=None`` disables all abbreviation/truncation: tool calls are
+    shown in full, never clipped with an ellipsis.
+    """
     if not tool_calls:
         return ""
 
@@ -81,17 +84,16 @@ def _extract_arg(tc, key_args: list[str]) -> str | None:
     return None
 
 
-def _fmt_known(tc, fmt: tuple, max_length: int = 40) -> str:
+def _fmt_known(tc, fmt: tuple, max_length: int | None = 40) -> str:
     """Format a registered tool using its template."""
-    if not fmt[0] and "{}" not in fmt[1]:
-        return fmt[1]
     val = _extract_arg(tc, fmt[0])
     if val is None:
         return tc.name
-    if fmt[2]:  # is_path
-        val = abbreviate_path(val, max_len=max_length)
-    elif fmt[3]:  # is_command
-        val = _abbreviate_command(val, max_len=max_length)
+    if max_length is not None:
+        if fmt[2]:  # is_path
+            val = abbreviate_path(val, max_len=max_length)
+        elif fmt[3]:  # is_command
+            val = _abbreviate_command(val, max_len=max_length)
     return fmt[1].format(val)
 
 
@@ -112,7 +114,7 @@ def _abbreviate_command(cmd: str, max_len: int = 40) -> str:
     return abbreviated[:max_len - 1] + "\u2026"
 
 
-def _fmt_mcp(tc, max_length: int = 40) -> str:
+def _fmt_mcp(tc, max_length: int | None = 40) -> str:
     """Format MCP tool as server::tool."""
     name = tc.name
     if "__" in name:
@@ -130,13 +132,17 @@ def _fmt_mcp(tc, max_length: int = 40) -> str:
     val = next((v for v in args.values() if isinstance(v, str) and v), None)
     if val is None:
         return f"{server}::{tool}"
+    if max_length is None:
+        return f'{server}::{tool}("{val}")'
     return f'{server}::{tool}("{abbreviate_path(val, max_length)}")'
 
 
-def _fmt_fallback(tc, max_length: int = 40) -> str:
+def _fmt_fallback(tc, max_length: int | None = 40) -> str:
     """Original formatting logic for unregistered tools."""
     args = _get_args(tc)
     val = next(iter(args.values()), None) if isinstance(args, dict) else None
     if not isinstance(val, str):
         return tc.name
-    return f'{tc.name}("{abbreviate_path(val, max_length)}")' if len(val) > max_length else f'{tc.name}("{val}")'
+    if max_length is None or len(val) <= max_length:
+        return f'{tc.name}("{val}")'
+    return f'{tc.name}("{abbreviate_path(val, max_length)}")'

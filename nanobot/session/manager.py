@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 from contextlib import suppress
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -20,25 +19,12 @@ from nanobot.utils.helpers import (
     find_legal_message_start,
     image_placeholder_text,
     safe_filename,
-    strip_think,
 )
-from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
 
 FILE_MAX_MESSAGES = 2000
 _MESSAGE_TIME_PREFIX_RE = re.compile(r"^\[Message Time: [^\]]+\]\n?")
 _LOCAL_IMAGE_BREADCRUMB_RE = re.compile(r"^\[image: (?:/|~)[^\]]+\]\s*$")
 _TOOL_CALL_ECHO_RE = re.compile(r'^\s*(?:generate_image|message)\([^)]*\)\s*$')
-_SESSION_PREVIEW_MAX_CHARS = 120
-_SESSION_LIST_PREVIEW_MAX_RECORDS = 200
-_SESSION_LIST_PREVIEW_MAX_CHARS = 1_000_000
-_FORK_VOLATILE_METADATA_KEYS = {
-    "goal_state",
-    "pending_user_turn",
-    "runtime_checkpoint",
-    "thread_goal",
-    "title",
-    "title_user_edited",
-}
 
 
 def _sanitize_assistant_replay_text(content: str) -> str:
@@ -57,46 +43,6 @@ def _sanitize_assistant_replay_text(content: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _text_preview(content: Any) -> str:
-    """Return compact display text for session lists."""
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                value = block.get("text")
-                if isinstance(value, str):
-                    parts.append(value)
-        text = " ".join(parts)
-    else:
-        return ""
-    text = _sanitize_assistant_replay_text(text)
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > _SESSION_PREVIEW_MAX_CHARS:
-        text = text[: _SESSION_PREVIEW_MAX_CHARS - 1].rstrip() + "…"
-    return text
-
-
-def _message_preview_text(message: dict[str, Any]) -> str:
-    """Session list preview text; subagent inject blobs are shortened for display."""
-    content: Any = message.get("content")
-    if message.get("injected_event") == "subagent_result" and isinstance(content, str):
-        content = scrub_subagent_announce_body(content)
-    return _text_preview(content)
-
-
-def _metadata_title(metadata: Any) -> str:
-    if not isinstance(metadata, dict):
-        return ""
-    title = metadata.get("title")
-    if not isinstance(title, str):
-        return ""
-    if metadata.get("title_user_edited") is True:
-        return title
-    return strip_think(title)
-
-
 @dataclass
 class Session:
     """A conversation session."""
@@ -107,15 +53,6 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
-
-    def __post_init__(self) -> None:
-        # An out-of-range offset (corrupt metadata) would hide all history; reset it.
-        if (
-            isinstance(self.last_consolidated, bool)
-            or not isinstance(self.last_consolidated, int)
-            or not 0 <= self.last_consolidated <= len(self.messages)
-        ):
-            self.last_consolidated = 0
 
     @staticmethod
     def _annotate_message_time(message: dict[str, Any], content: Any) -> Any:
@@ -159,6 +96,11 @@ class Session:
         History is sliced by message count first (``max_messages``), then by
         token budget from the tail (``max_tokens``) when provided.
         """
+        # Safety clamp: last_consolidated can drift beyond message count after
+        # file-cap truncation or corruption. Clamp here to guarantee we never
+        # return an empty slice when messages actually exist.
+        if self.last_consolidated > len(self.messages):
+            self.last_consolidated = len(self.messages)
         unconsolidated = self.messages[self.last_consolidated:]
         max_messages = max_messages if max_messages > 0 else 120
         sliced = unconsolidated[-max_messages:]
@@ -180,8 +122,6 @@ class Session:
 
         out: list[dict[str, Any]] = []
         for message in sliced:
-            if message.get("_command"):
-                continue
             content = message.get("content", "")
             role = message.get("role")
             if role == "assistant" and isinstance(content, str):
@@ -197,45 +137,6 @@ class Session:
                     image_placeholder_text(p) for p in media if isinstance(p, str) and p
                 )
                 content = f"{content}\n{breadcrumbs}" if content else breadcrumbs
-            cli_apps = message.get("cli_apps")
-            if role == "user" and isinstance(cli_apps, list) and cli_apps and isinstance(content, str):
-                cli_lines: list[str] = []
-                for item in cli_apps[:8]:
-                    if not isinstance(item, dict):
-                        continue
-                    name = str(item.get("name") or "").strip().lower()
-                    if not name:
-                        continue
-                    entry = str(item.get("entry_point") or "unknown").strip() or "unknown"
-                    cli_lines.append(
-                        f"[CLI App Attachment: @{name}; tool=run_cli_app; entry_point={entry}; "
-                        f"skill=skills/cli-app-{name}/SKILL.md]"
-                    )
-                if cli_lines:
-                    breadcrumbs = "\n".join(cli_lines)
-                    content = f"{content}\n{breadcrumbs}" if content else breadcrumbs
-            mcp_presets = message.get("mcp_presets")
-            if (
-                role == "user"
-                and isinstance(mcp_presets, list)
-                and mcp_presets
-                and isinstance(content, str)
-            ):
-                mcp_lines: list[str] = []
-                for item in mcp_presets[:8]:
-                    if not isinstance(item, dict):
-                        continue
-                    name = str(item.get("name") or "").strip().lower()
-                    if not name:
-                        continue
-                    transport = str(item.get("transport") or "mcp").strip() or "mcp"
-                    mcp_lines.append(
-                        f"[MCP Preset Attachment: @{name}; tool_prefix=mcp_{name}_; "
-                        f"transport={transport}]"
-                    )
-                if mcp_lines:
-                    breadcrumbs = "\n".join(mcp_lines)
-                    content = f"{content}\n{breadcrumbs}" if content else breadcrumbs
             if include_timestamps:
                 content = self._annotate_message_time(message, content)
             if role == "assistant" and isinstance(content, str) and not content.strip():
@@ -287,25 +188,13 @@ class Session:
         self.updated_at = datetime.now()
         self.metadata.pop("_last_summary", None)
 
-    def retain_recent_legal_suffix(self, max_messages: int) -> tuple[list[dict], int]:
-        """Keep a legal recent suffix constrained by a hard message cap.
-
-        Returns ``(dropped, already_consolidated_count)`` where *dropped* is
-        the list of removed messages (in original order) and
-        *already_consolidated_count* is how many of those were inside the
-        pre-existing ``last_consolidated`` prefix and therefore do not need
-        raw archiving.
-        """
+    def retain_recent_legal_suffix(self, max_messages: int) -> None:
+        """Keep a legal recent suffix constrained by a hard message cap."""
         if max_messages <= 0:
-            dropped = list(self.messages)
-            lc = self.last_consolidated
             self.clear()
-            return dropped, min(lc, len(dropped))
+            return
         if len(self.messages) <= max_messages:
-            return [], 0
-
-        original = list(self.messages)
-        before_lc = self.last_consolidated
+            return
 
         retained = list(self.messages[-max_messages:])
 
@@ -336,32 +225,13 @@ class Session:
             if start:
                 retained = retained[start:]
 
-        # Compute actually-dropped messages using identity comparison so that
-        # even when retained is a non-contiguous slice of original (the else
-        # branch above), we never duplicate or lose messages.
-        retained_ids = set(id(m) for m in retained)
-        dropped = [m for m in original if id(m) not in retained_ids]
-
-        # Count how many dropped messages were in the already-consolidated
-        # prefix of the original list.  This cannot be a simple min() because
-        # dropped may include messages from *after* the consolidated prefix
-        # (e.g. in the else branch).
-        already_consolidated = sum(
-            1 for i, m in enumerate(original)
-            if i < before_lc and id(m) not in retained_ids
-        )
-
-        # New last_consolidated = count of retained messages that were inside
-        # the old consolidated prefix.
-        new_lc = sum(
-            1 for i, m in enumerate(original)
-            if i < before_lc and id(m) in retained_ids
-        )
-
+        dropped = len(self.messages) - len(retained)
         self.messages = retained
-        self.last_consolidated = new_lc
+        self.last_consolidated = max(0, self.last_consolidated - dropped)
+        # Safety clamp: ensure last_consolidated never exceeds message count
+        if self.last_consolidated > len(self.messages):
+            self.last_consolidated = len(self.messages)
         self.updated_at = datetime.now()
-        return dropped, already_consolidated
 
     def enforce_file_cap(
         self,
@@ -372,17 +242,23 @@ class Session:
         if limit <= 0 or len(self.messages) <= limit:
             return
 
-        dropped, already_consolidated = self.retain_recent_legal_suffix(limit)
-        if not dropped:
+        before = list(self.messages)
+        before_last_consolidated = self.last_consolidated
+        before_count = len(before)
+        self.retain_recent_legal_suffix(limit)
+        dropped_count = before_count - len(self.messages)
+        if dropped_count <= 0:
             return
 
+        dropped = before[:dropped_count]
+        already_consolidated = min(before_last_consolidated, dropped_count)
         archive_chunk = dropped[already_consolidated:]
         if archive_chunk and on_archive:
             on_archive(archive_chunk)
         logger.info(
             "Session file cap hit for {}: dropped {}, raw-archived {}, kept {}",
             self.key,
-            len(dropped),
+            dropped_count,
             len(archive_chunk),
             len(self.messages),
         )
@@ -397,9 +273,38 @@ class SessionManager:
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
-        self.sessions_dir = ensure_dir(self.workspace / "sessions")
+        self.sessions_dir = ensure_dir(self.workspace / ".nanobot" / "sessions")
         self.legacy_sessions_dir = get_legacy_sessions_dir()
+        self.legacy_workspace_sessions_dir = self.workspace / "sessions"
         self._cache: dict[str, Session] = {}
+        self._migrate_legacy_workspace_sessions()
+
+    def _migrate_legacy_workspace_sessions(self) -> None:
+        """Move pre-unification ``<workspace>/sessions/`` into ``<workspace>/.nanobot/sessions/``."""
+        legacy = self.legacy_workspace_sessions_dir
+        if not legacy.is_dir() or legacy.resolve() == self.sessions_dir.resolve():
+            return
+        try:
+            for entry in legacy.iterdir():
+                if not entry.is_file() or entry.suffix != ".jsonl":
+                    continue
+                target = self.sessions_dir / entry.name
+                if target.exists():
+                    continue
+                try:
+                    shutil.move(str(entry), str(target))
+                except Exception:
+                    logger.exception("Failed to migrate session file {}", entry)
+            try:
+                if not any(legacy.iterdir()):
+                    legacy.rmdir()
+            except OSError:
+                pass
+            logger.info(
+                "Migrated workspace sessions from {} to {}", legacy, self.sessions_dir
+            )
+        except Exception:
+            logger.exception("Failed to migrate legacy workspace sessions")
 
     @staticmethod
     def safe_key(key: str) -> str:
@@ -472,6 +377,7 @@ class SessionManager:
                     else:
                         messages.append(data)
 
+            last_consolidated = min(last_consolidated, len(messages))
             return Session(
                 key=key,
                 messages=messages,
@@ -530,6 +436,7 @@ class SessionManager:
             if not messages and not metadata:
                 return None
 
+            last_consolidated = min(last_consolidated, len(messages))
             return Session(
                 key=key,
                 messages=messages,
@@ -637,62 +544,6 @@ class SessionManager:
             logger.warning("Failed to delete session file {}: {}", path, e)
             return False
 
-    def fork_session_before_user_index(
-        self,
-        source_key: str,
-        target_key: str,
-        before_user_index: int,
-    ) -> Session | None:
-        """Create *target_key* from *source_key* before a global user-message index.
-
-        ``before_user_index`` is zero-based over user messages in the full session:
-        ``0`` means "before the first user message", ``1`` means "before the
-        second user message", and so on. A value equal to the total user-message
-        count copies the full session prefix. WebUI assistant-reply forks pass
-        the next user index so the selected completed assistant turn is included.
-        """
-        if before_user_index < 0:
-            return None
-        source = self._cache.get(source_key) or self._load(source_key)
-        if source is None:
-            return None
-
-        copied: list[dict[str, Any]] = []
-        user_index = 0
-        found_target = False
-        for message in source.messages:
-            if message.get("role") == "user":
-                if user_index == before_user_index:
-                    found_target = True
-                    break
-                user_index += 1
-            copied.append(deepcopy(message))
-        if user_index == before_user_index:
-            found_target = True
-        if not found_target:
-            return None
-
-        metadata = deepcopy(source.metadata)
-        for key in _FORK_VOLATILE_METADATA_KEYS:
-            metadata.pop(key, None)
-
-        last_consolidated = min(source.last_consolidated, len(copied))
-        if source.last_consolidated > len(copied):
-            metadata.pop("_last_summary", None)
-            last_consolidated = 0
-
-        now = datetime.now()
-        target = Session(
-            key=target_key,
-            messages=copied,
-            created_at=now,
-            updated_at=now,
-            metadata=metadata,
-            last_consolidated=last_consolidated,
-        )
-        self.save(target, fsync=True)
-        return target
-
     def read_session_file(self, key: str) -> dict[str, Any] | None:
         """Load a session from disk without caching; intended for read-only HTTP endpoints.
 
@@ -748,7 +599,7 @@ class SessionManager:
         for path in self.sessions_dir.glob("*.jsonl"):
             fallback_key = path.stem.replace("_", ":", 1)
             try:
-                # Read the metadata line and a small preview for WebUI/session lists.
+                # Read just the metadata line
                 with open(path, encoding="utf-8") as f:
                     first_line = f.readline().strip()
                     if first_line:
@@ -756,39 +607,12 @@ class SessionManager:
                         if data.get("_type") == "metadata":
                             key = data.get("key") or path.stem.replace("_", ":", 1)
                             metadata = data.get("metadata", {})
-                            title = _metadata_title(metadata)
-                            preview = ""
-                            fallback_preview = ""
-                            scanned_records = 0
-                            scanned_chars = 0
-                            for line in f:
-                                if not line.strip():
-                                    continue
-                                scanned_records += 1
-                                scanned_chars += len(line)
-                                if (
-                                    scanned_records > _SESSION_LIST_PREVIEW_MAX_RECORDS
-                                    or scanned_chars > _SESSION_LIST_PREVIEW_MAX_CHARS
-                                ):
-                                    break
-                                item = json.loads(line)
-                                if item.get("_type") == "metadata":
-                                    continue
-                                text = _message_preview_text(item)
-                                if not text:
-                                    continue
-                                if item.get("role") == "user":
-                                    preview = text
-                                    break
-                                if not fallback_preview and item.get("role") == "assistant":
-                                    fallback_preview = text
-                            preview = preview or fallback_preview
+                            title = metadata.get("title") if isinstance(metadata, dict) else None
                             sessions.append({
                                 "key": key,
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
-                                "title": title,
-                                "preview": preview,
+                                "title": title if isinstance(title, str) else "",
                                 "path": str(path)
                             })
             except Exception:
@@ -798,14 +622,10 @@ class SessionManager:
                         "key": repaired.key,
                         "created_at": repaired.created_at.isoformat(),
                         "updated_at": repaired.updated_at.isoformat(),
-                        "title": _metadata_title(repaired.metadata),
-                        "preview": next(
-                            (
-                                text
-                                for msg in repaired.messages
-                                if (text := _message_preview_text(msg))
-                            ),
-                            "",
+                        "title": (
+                            repaired.metadata.get("title")
+                            if isinstance(repaired.metadata.get("title"), str)
+                            else ""
                         ),
                         "path": str(path)
                     })

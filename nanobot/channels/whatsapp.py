@@ -216,7 +216,7 @@ class WhatsAppChannel(BaseChannel):
 
             # Extract just the phone number or lid as chat_id
             is_group = data.get("isGroup", False)
-            was_mentioned = bool(data.get("wasMentioned", False) or data.get("isReplyToBot", False))
+            was_mentioned = data.get("wasMentioned", False)
 
             if is_group and getattr(self.config, "group_policy", "open") == "mention":
                 if not was_mentioned:
@@ -225,8 +225,7 @@ class WhatsAppChannel(BaseChannel):
             # Classify by JID suffix: @s.whatsapp.net = phone, @lid.whatsapp.net = LID
             # The bridge's pn/sender fields don't consistently map to phone/LID across versions.
             raw_a = pn or ""
-            participant = data.get("participant", "")
-            raw_b = participant or sender or ""
+            raw_b = sender or ""
             id_a = raw_a.split("@")[0] if "@" in raw_a else raw_a
             id_b = raw_b.split("@")[0] if "@" in raw_b else raw_b
 
@@ -266,7 +265,6 @@ class WhatsAppChannel(BaseChannel):
                     transcription = await self.transcribe_audio(media_paths[0])
                     if transcription:
                         content = transcription
-                        media_paths = []
                         self.logger.info("Transcribed voice from {}: {}...", sender_id, transcription[:50])
                     else:
                         content = "[Voice Message: Transcription failed]"
@@ -290,8 +288,6 @@ class WhatsAppChannel(BaseChannel):
                     "message_id": message_id,
                     "timestamp": data.get("timestamp"),
                     "is_group": data.get("isGroup", False),
-                    "participant": participant or None,
-                    "is_reply_to_bot": data.get("isReplyToBot", False),
                 },
             )
 

@@ -71,93 +71,6 @@ def strip_think(text: str) -> str:
     return text.strip()
 
 
-def extract_think(text: str) -> tuple[str | None, str]:
-    """Extract thinking content from inline ``<think>`` / ``<thought>`` blocks.
-
-    Returns ``(thinking_text, cleaned_text)``. Only closed blocks are
-    extracted; unclosed streaming prefixes are stripped from the cleaned
-    text but not surfaced — :func:`strip_think` handles that case.
-    """
-    parts: list[str] = []
-    for m in re.finditer(r"<think>([\s\S]*?)</think>", text):
-        parts.append(m.group(1).strip())
-    for m in re.finditer(r"<thought>([\s\S]*?)</thought>", text):
-        parts.append(m.group(1).strip())
-    thinking = "\n\n".join(parts) if parts else None
-    return thinking, strip_think(text)
-
-
-class IncrementalThinkExtractor:
-    """Stateful inline ``<think>`` extractor for streaming buffers.
-
-    Streaming providers expose only a single content delta channel. When a
-    model embeds reasoning in ``<think>...</think>`` blocks inside that
-    channel, callers need to surface the reasoning incrementally as it
-    arrives without re-emitting earlier text. This holds the "already
-    emitted" cursor so the runner and the loop hook share one shape.
-    """
-
-    __slots__ = ("_emitted",)
-
-    def __init__(self) -> None:
-        self._emitted = ""
-
-    def reset(self) -> None:
-        self._emitted = ""
-
-    async def feed(self, buf: str, emit: Any) -> bool:
-        """Emit any new thinking text found in ``buf``.
-
-        Returns True if anything was emitted this call. ``emit`` is an
-        async callable taking a single string (typically
-        ``hook.emit_reasoning``).
-        """
-        thinking, _ = extract_think(buf)
-        if not thinking or thinking == self._emitted:
-            return False
-        new = thinking[len(self._emitted):].strip()
-        self._emitted = thinking
-        if not new:
-            return False
-        await emit(new)
-        return True
-
-
-def extract_reasoning(
-    reasoning_content: str | None,
-    thinking_blocks: list[dict[str, Any]] | None,
-    content: str | None,
-) -> tuple[str | None, str | None]:
-    """Return ``(reasoning_text, cleaned_content)`` from one model response.
-
-    Single source of truth for "what reasoning did this response carry, and
-    what answer text remains after we peel it out". Fallback order:
-
-    1. Dedicated ``reasoning_content`` (DeepSeek-R1, Kimi, MiMo, OpenAI
-       reasoning models, Bedrock).
-    2. Anthropic ``thinking_blocks``.
-    3. Inline ``<think>`` / ``<thought>`` blocks in ``content``.
-
-    Only one source contributes per response; lower-priority sources are
-    ignored if a higher-priority one is present, but inline ``<think>``
-    tags are still stripped from ``content`` so they never leak into the
-    final answer.
-    """
-    if reasoning_content:
-        return reasoning_content, strip_think(content) if content else content
-    if thinking_blocks:
-        parts = [
-            tb.get("thinking", "")
-            for tb in thinking_blocks
-            if isinstance(tb, dict) and tb.get("type") == "thinking"
-        ]
-        joined = "\n\n".join(p for p in parts if p)
-        return (joined or None), strip_think(content) if content else content
-    if content:
-        return extract_think(content)
-    return None, content
-
-
 def detect_image_mime(data: bytes) -> str | None:
     """Detect image MIME type from magic bytes, ignoring file extension."""
     if data[:8] == b"\x89PNG\r\n\x1a\n":
@@ -576,7 +489,7 @@ def build_status_content(
 
 
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
-    """Sync bundled templates to workspace. Creates missing files without overwriting user files."""
+    """Sync bundled templates into ``<workspace>/.nanobot/``. Only creates missing files."""
     from importlib.resources import files as pkg_files
 
     try:
@@ -586,22 +499,27 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
     if not tpl.is_dir():
         return []
 
+    data_dir = workspace / ".nanobot"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
     added: list[str] = []
 
     def _write(src, dest: Path):
-        content = src.read_text(encoding="utf-8") if src else ""
         if dest.exists():
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-        added.append(str(dest.relative_to(workspace)))
+        dest.write_text(src.read_text(encoding="utf-8") if src else "", encoding="utf-8")
+        try:
+            added.append(str(dest.relative_to(workspace)))
+        except ValueError:
+            added.append(str(dest))
 
     for item in tpl.iterdir():
         if item.name.endswith(".md") and not item.name.startswith("."):
-            _write(item, workspace / item.name)
-    _write(tpl / "memory" / "MEMORY.md", workspace / "memory" / "MEMORY.md")
-    _write(None, workspace / "memory" / "history.jsonl")
-    (workspace / "skills").mkdir(exist_ok=True)
+            _write(item, data_dir / item.name)
+    _write(tpl / "memory" / "MEMORY.md", data_dir / "memory" / "MEMORY.md")
+    _write(None, data_dir / "memory" / "history.jsonl")
+    (data_dir / "skills").mkdir(exist_ok=True)
 
     if added and not silent:
         from rich.console import Console
@@ -609,12 +527,13 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         for name in added:
             Console().print(f"  [dim]Created {name}[/dim]")
 
-    # Initialize git for memory version control
+    # Initialize git for memory version control inside the data dir, so we
+    # never init a repo at the user's actual workspace root.
     try:
         from nanobot.utils.gitstore import GitStore
 
         gs = GitStore(
-            workspace,
+            data_dir,
             tracked_files=[
                 "SOUL.md",
                 "USER.md",
@@ -623,17 +542,6 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         )
         gs.init()
     except Exception:
-        logger.exception("Failed to initialize git store for {}", workspace)
+      logger.exception("Failed to initialize git store for {}", data_dir)
 
     return added
-
-
-def load_bundled_template(template_name: str) -> str | None:
-    """Read a bundled template file from the nanobot package."""
-    from importlib.resources import files as pkg_files
-
-    with suppress(Exception):
-        tpl = pkg_files("nanobot") / "templates" / template_name
-        if tpl.is_file():
-            return tpl.read_text(encoding="utf-8")
-    return None

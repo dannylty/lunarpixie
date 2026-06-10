@@ -10,21 +10,23 @@ from nanobot.agent.hook import AgentHookContext
 
 
 def on_progress_accepts_tool_events(cb: Callable[..., Any]) -> bool:
-    return _on_progress_accepts(cb, "tool_events")
-
-
-def on_progress_accepts_file_edit_events(cb: Callable[..., Any]) -> bool:
-    return _on_progress_accepts(cb, "file_edit_events")
-
-
-def _on_progress_accepts(cb: Callable[..., Any], name: str) -> bool:
     try:
         sig = inspect.signature(cb)
     except (TypeError, ValueError):
         return False
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
         return True
-    return name in sig.parameters
+    return "tool_events" in sig.parameters
+
+
+def on_progress_accepts_perf_hint(cb: Callable[..., Any]) -> bool:
+    try:
+        sig = inspect.signature(cb)
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return True
+    return "perf_hint" in sig.parameters
 
 
 async def invoke_on_progress(
@@ -32,26 +34,23 @@ async def invoke_on_progress(
     content: str,
     *,
     tool_hint: bool = False,
+    perf_hint: bool = False,
     tool_events: list[dict[str, Any]] | None = None,
 ) -> None:
-    if tool_events and on_progress_accepts_tool_events(on_progress):
-        await on_progress(content, tool_hint=tool_hint, tool_events=tool_events)
+    accepts_perf = on_progress_accepts_perf_hint(on_progress)
+    accepts_tool_events = on_progress_accepts_tool_events(on_progress)
+
+    if tool_events and accepts_tool_events:
+        if accepts_perf:
+            await on_progress(content, tool_hint=tool_hint, perf_hint=perf_hint, tool_events=tool_events)
+        else:
+            await on_progress(content, tool_hint=tool_hint, tool_events=tool_events)
         return
-    await on_progress(content, tool_hint=tool_hint)
 
-
-async def invoke_file_edit_progress(
-    on_progress: Callable[..., Awaitable[None]],
-    file_edit_events: list[dict[str, Any]],
-) -> None:
-    if not file_edit_events or not on_progress_accepts_file_edit_events(on_progress):
-        return
-    await on_progress("", file_edit_events=file_edit_events)
-
-
-def _tool_event_arguments(tool_call: Any) -> dict[str, Any]:
-    arguments = getattr(tool_call, "arguments", {}) or {}
-    return arguments if isinstance(arguments, dict) else {}
+    if accepts_perf:
+        await on_progress(content, tool_hint=tool_hint, perf_hint=perf_hint)
+    else:
+        await on_progress(content, tool_hint=tool_hint)
 
 
 def build_tool_event_start_payload(tool_call: Any) -> dict[str, Any]:
@@ -60,7 +59,7 @@ def build_tool_event_start_payload(tool_call: Any) -> dict[str, Any]:
         "phase": "start",
         "call_id": str(getattr(tool_call, "id", "") or ""),
         "name": getattr(tool_call, "name", ""),
-        "arguments": _tool_event_arguments(tool_call),
+        "arguments": getattr(tool_call, "arguments", {}) or {},
         "result": None,
         "error": None,
         "files": [],
@@ -91,7 +90,7 @@ def build_tool_event_finish_payloads(context: AgentHookContext) -> list[dict[str
             "phase": phase,
             "call_id": str(getattr(tool_call, "id", "") or ""),
             "name": getattr(tool_call, "name", ""),
-            "arguments": _tool_event_arguments(tool_call),
+            "arguments": getattr(tool_call, "arguments", {}) or {},
             "result": result if phase == "end" else None,
             "error": None,
             "files": files,

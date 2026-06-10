@@ -8,7 +8,6 @@ from typing import Any
 
 from nanobot.agent.hook import AgentHook, SDKCaptureHook
 from nanobot.agent.loop import AgentLoop
-from nanobot.providers.image_generation import image_gen_provider_configs
 
 
 @dataclass(slots=True)
@@ -64,7 +63,10 @@ class Nanobot:
 
         loop = AgentLoop.from_config(
             config,
-            image_generation_provider_configs=image_gen_provider_configs(config),
+            image_generation_provider_configs={
+                "openrouter": config.providers.openrouter,
+                "aihubmix": config.providers.aihubmix,
+            },
         )
         return cls(loop)
 
@@ -101,13 +103,4 @@ class Nanobot:
             messages=capture.messages,
         )
 
-    async def aclose(self) -> None:
-        """Release resources held by this instance (MCP connections, etc.)."""
-        await self._loop.close_mcp()
-
-    async def __aenter__(self) -> Nanobot:
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        await self.aclose()
 
