@@ -2,7 +2,12 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict
+
+
+class ButtonDict(TypedDict):
+    text: str
+    callback_data: str
 
 
 @dataclass
@@ -34,5 +39,5 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    buttons: list[list[str]] = field(default_factory=list)
+    buttons: list[list[str | ButtonDict]] = field(default_factory=list)
 

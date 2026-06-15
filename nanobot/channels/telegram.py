@@ -1140,6 +1140,24 @@ class TelegramChannel(BaseChannel):
         sender_id = self._sender_id(user)
         if not self.is_allowed(sender_id):
             return
+
+        # ── Config UI: intercept text input for settings ──────────
+        if message.text and not message.text.startswith("/"):
+            from nanobot.command.config_ui import _editing, handle_input
+            if sender_id in _editing:
+                content, buttons = handle_input(sender_id, message.text)
+                keyboard = self._build_keyboard(buttons, force=True) if buttons else None
+                try:
+                    await message.reply_text(
+                        text=content,
+                        parse_mode="Markdown",
+                        reply_markup=keyboard,
+                    )
+                except Exception as e:
+                    self.logger.error("Failed to send config input response: {}", e)
+                return
+        # ── End config UI ────────────────────────────────────────
+
         self._remember_thread_context(message)
 
         # Store chat_id for replies
@@ -1348,14 +1366,30 @@ class TelegramChannel(BaseChannel):
 
         return ""
 
-    def _build_keyboard(self, buttons: list) -> InlineKeyboardMarkup | None:
-        """Build inline keyboard markup if inline_keyboards is enabled."""
-        if not buttons or not self.config.inline_keyboards:
+    def _build_keyboard(self, buttons: list, force: bool = False) -> InlineKeyboardMarkup | None:
+        """Build inline keyboard markup.
+
+        Each button can be a string (label == callback_data) or a dict with
+        'text' and 'callback_data' keys for separate display/action.
+        If force=True, build keyboard regardless of inline_keyboards config.
+        """
+        if not buttons:
             return None
-        keyboard = [
-            [InlineKeyboardButton(label, callback_data=self._safe_callback_data(label)) for label in row]
-            for row in buttons
-        ]
+        if not force and not self.config.inline_keyboards:
+            return None
+        keyboard: list[list[InlineKeyboardButton]] = []
+        for row in buttons:
+            btn_row: list[InlineKeyboardButton] = []
+            for btn in row:
+                if isinstance(btn, dict):
+                    text = btn["text"]
+                    data = btn.get("callback_data", text)
+                    btn_row.append(
+                        InlineKeyboardButton(text=text, callback_data=self._safe_callback_data(data))
+                    )
+                else:
+                    btn_row.append(InlineKeyboardButton(btn, callback_data=self._safe_callback_data(btn)))
+            keyboard.append(btn_row)
         return InlineKeyboardMarkup(keyboard)
 
     @staticmethod
@@ -1386,6 +1420,13 @@ class TelegramChannel(BaseChannel):
             return
         button_label = query.data or ""
         await query.answer()
+
+        # ── Config UI callbacks ──────────────────────────────────
+        if button_label.startswith("cfg:"):
+            await self._handle_config_callback(query, sender_id, button_label)
+            return
+        # ── End config UI ────────────────────────────────────────
+
         if query.message:
             with suppress(Exception):
                 await query.message.edit_reply_markup(reply_markup=None)
@@ -1404,3 +1445,49 @@ class TelegramChannel(BaseChannel):
                 "is_callback": True,
             },
         )
+
+    async def _handle_config_callback(
+        self, query, sender_id: str, data: str,
+    ) -> None:
+        """Handle config UI callback queries."""
+        from nanobot.command.config_ui import handle_callback
+
+        parts = data.split(":", 2)  # cfg:action:param
+        action = parts[1] if len(parts) > 1 else ""
+        param = parts[2] if len(parts) > 2 else ""
+
+        # Handle cancel/close
+        if action == "cancel" or action == "close":
+            await query.answer("Config editor closed")
+            return
+
+        try:
+            content, buttons = handle_callback(action, param)
+        except Exception as e:
+            self.logger.error("Config callback error: {}", e)
+            content = f"❌ Error: {e}"
+            buttons = [["⬅️ Back"]]
+
+        # Build inline keyboard (force=True to bypass inline_keyboards config)
+        keyboard = self._build_keyboard(buttons, force=True)
+
+        # Edit the callback message with new content and keyboard
+        if query.message:
+            try:
+                await query.message.edit_text(
+                    text=content,
+                    parse_mode="Markdown",
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                self.logger.warning("Failed to edit config message: {}", e)
+                # Fallback: send new message
+                try:
+                    await self.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=content,
+                        parse_mode="Markdown",
+                        reply_markup=keyboard,
+                    )
+                except Exception as send_err:
+                    self.logger.error("Failed to send config message: {}", send_err)

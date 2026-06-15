@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from nanobot import __version__
 from nanobot.bus.events import OutboundMessage
+from nanobot.command.config_ui import cmd_configs
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.utils.helpers import build_status_content
 from nanobot.utils.restart import set_restart_notice_to_env
@@ -70,6 +71,12 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Run Dream",
         "Manually trigger memory consolidation.",
         "sparkles",
+    ),
+    BuiltinCommandSpec(
+        "/configs",
+        "Config Editor",
+        "Interactive settings editor via inline keyboard.",
+        "settings",
     ),
     BuiltinCommandSpec(
         "/clear",
@@ -322,4 +329,5 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
     router.exact("/dream", cmd_dream)
+    router.exact("/configs", cmd_configs)
     router.exact("/help", cmd_help)
