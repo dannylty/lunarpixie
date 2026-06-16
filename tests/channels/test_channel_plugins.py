@@ -1110,13 +1110,23 @@ async def test_stop_all_cancels_dispatcher_and_stops_channels():
 
 
 @pytest.mark.asyncio
-async def test_start_channel_logs_error_on_failure():
-    """_start_channel should log error when channel start fails."""
+async def test_start_channel_retries_with_backoff_on_failure(monkeypatch):
+    """_start_channel should retry with backoff instead of giving up after one failure.
+
+    A channel's start() can fail transiently (e.g. a timed-out handshake
+    during a network blip); it shouldn't be left dead for the rest of the
+    process's life.
+    """
     class _FailingChannel(BaseChannel):
         name = "failing"
         display_name = "Failing"
 
+        def __init__(self, config, bus):
+            super().__init__(config, bus)
+            self.attempts = 0
+
         async def start(self) -> None:
+            self.attempts += 1
             raise RuntimeError("connection failed")
 
         async def stop(self) -> None:
@@ -1135,11 +1145,24 @@ async def test_start_channel_logs_error_on_failure():
     mgr.bus = MessageBus()
     mgr.channels = {}
     mgr._dispatch_task = None
+    mgr._stopping = False
 
     ch = _FailingChannel(fake_config, mgr.bus)
 
-    # Should not raise, just log error
+    sleep_delays: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+        if len(sleep_delays) >= 2:
+            mgr._stopping = True  # simulate stop_all() being called
+
+    monkeypatch.setattr("nanobot.channels.manager.asyncio.sleep", _fake_sleep)
+
+    # Should not raise, just log and retry (with backoff) until stopped.
     await mgr._start_channel("failing", ch)
+
+    assert ch.attempts == 2
+    assert sleep_delays == [5, 15]
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,11 @@ def _default_webui_dist() -> Path | None:
 # Retry delays for message sending (exponential backoff: 1s, 2s, 4s)
 _SEND_RETRY_DELAYS = (1, 2, 4)
 
+# Backoff delays for restarting a channel whose start() raised or exited
+# early (e.g. a transient network blip during the initial handshake).
+# Repeats at the last value once exhausted.
+_CHANNEL_RESTART_DELAYS = (5, 15, 30, 60)
+
 _BOOL_CAMEL_ALIASES: dict[str, str] = {
     "send_progress": "sendProgress",
     "send_tool_hints": "sendToolHints",
@@ -61,6 +66,7 @@ class ChannelManager:
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
         self._origin_reply_fingerprints: dict[tuple[str, str, str], str] = {}
+        self._stopping = False
 
         self._init_channels()
 
@@ -171,11 +177,36 @@ class ChannelManager:
         return value if isinstance(value, bool) else default
 
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
-        """Start a channel and log any exceptions."""
-        try:
-            await channel.start()
-        except Exception:
-            logger.exception("Failed to start channel {}", name)
+        """Start a channel, retrying with backoff if it fails or exits early.
+
+        ``channel.start()`` is expected to block until ``stop_all()`` is
+        called. In practice it can raise (e.g. a Telegram ``getMe()``
+        handshake timing out during a transient network blip) or return
+        early. Previously that left the channel silently dead for the rest
+        of the process's life, requiring a manual container restart to
+        notice and fix. Retry with backoff instead so it self-heals once
+        the underlying issue (network, upstream API, etc.) clears.
+        """
+        attempt = 0
+        while not self._stopping:
+            try:
+                await channel.start()
+                if self._stopping:
+                    return
+                logger.warning("{} channel exited unexpectedly; restarting", name)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Failed to start channel {} (attempt {})", name, attempt + 1
+                )
+
+            if self._stopping:
+                return
+            delay = _CHANNEL_RESTART_DELAYS[min(attempt, len(_CHANNEL_RESTART_DELAYS) - 1)]
+            attempt += 1
+            logger.info("Retrying {} channel start in {}s...", name, delay)
+            await asyncio.sleep(delay)
 
     async def start_all(self) -> None:
         """Start all channels and the outbound dispatcher."""
@@ -218,6 +249,7 @@ class ChannelManager:
     async def stop_all(self) -> None:
         """Stop all channels and the dispatcher."""
         logger.info("Stopping all channels...")
+        self._stopping = True
 
         # Stop dispatcher
         if self._dispatch_task:
