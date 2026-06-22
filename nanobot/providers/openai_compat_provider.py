@@ -1202,13 +1202,9 @@ class OpenAICompatProvider(LLMProvider):
         )
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
 
-        # Recover tool calls from llama-server "failed to parse input" errors.
-        # This happens when a thinking model (Qwen3) emits <think>...</think> before
-        # <tool_call>; the peg-native parser chokes but includes the raw output in
-        # the error body, so we can parse it ourselves.
         recovered = _recover_hermes_xml_tool_calls(body)
         if recovered:
-            logger.debug("Recovered {} tool call(s) from llama-server parse error", len(recovered))
+            logger.warning("Recovered {} tool call(s) from llama-server peg-native parse error", len(recovered))
             return LLMResponse(content=None, tool_calls=recovered, finish_reason="tool_calls")
 
         msg = f"Error: {body_text.strip()[:500]}" if body_text.strip() else f"Error calling LLM: {e}"
