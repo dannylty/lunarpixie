@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import re
 import secrets
 import string
 import time
@@ -170,60 +169,6 @@ def _extract_tc_extras(tc: Any) -> tuple[
             fn_prov = _coerce_dict(_get(fn_obj, "provider_specific_fields"))
 
     return extra_content, prov, fn_prov
-
-
-# ---------------------------------------------------------------------------
-# Hermes-XML tool-call recovery
-# ---------------------------------------------------------------------------
-# Some models (Qwen3, OpenHermes-based) emit tool calls in Hermes XML format:
-#   <tool_call>
-#   <function=NAME>
-#   <parameter=KEY>VALUE</parameter>
-#   </function>
-#   </tool_call>
-# llama.cpp / llama-server expects the Qwen3-native JSON variant
-#   (<tool_call>\n{"name":...}\n</tool_call>) and returns HTTP 500 when it
-# encounters the Hermes format.  We recover by parsing the XML directly from
-# the error body so the tool call still executes without wasting retries.
-
-_HERMES_TC_RE = re.compile(
-    r"<tool_call>\s*<function=([^\n>]+)>(.*?)</function>\s*</tool_call>",
-    re.DOTALL,
-)
-_HERMES_PARAM_RE = re.compile(
-    r"<parameter=([^\n>\s]+)>\s*(.*?)\s*</parameter>",
-    re.DOTALL,
-)
-
-
-def _parse_hermes_tool_calls(text: str) -> list["ToolCallRequest"]:
-    """Extract Hermes-XML tool calls from a llama-server 500 error body.
-
-    Returns a list of ``ToolCallRequest`` objects, or an empty list if no
-    Hermes-format tool calls are found in *text*.
-    """
-    # Normalise escaped newlines so the regex works on both raw and repr strings.
-    normalized = text.replace("\\n", "\n")
-    calls = []
-    for tc_match in _HERMES_TC_RE.finditer(normalized):
-        fn_name = tc_match.group(1).strip()
-        fn_body = tc_match.group(2)
-        arguments: dict[str, Any] = {}
-        for p_match in _HERMES_PARAM_RE.finditer(fn_body):
-            key = p_match.group(1).strip()
-            val = p_match.group(2).strip()
-            # Try to coerce the value to a native Python type (bool, number, …);
-            # fall back to a plain string for anything that doesn't parse cleanly.
-            try:
-                arguments[key] = json.loads(val)
-            except Exception:
-                arguments[key] = val
-        calls.append(ToolCallRequest(
-            id=_short_tool_id(),
-            name=fn_name,
-            arguments=arguments,
-        ))
-    return calls
 
 
 def _uses_openrouter_attribution(spec: "ProviderSpec | None", api_base: str | None) -> bool:
@@ -1215,24 +1160,6 @@ class OpenAICompatProvider(LLMProvider):
             or getattr(getattr(e, "response", None), "text", None)
         )
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
-
-        # Recover Hermes-XML tool calls from llama-server 500 errors.
-        # Qwen3 and other Hermes-based models sometimes emit
-        #   <tool_call><function=NAME><parameter=K>V</parameter></function></tool_call>
-        # instead of the JSON format llama-server expects; we salvage the call
-        # so it executes correctly without wasting the remaining retries.
-        hermes_calls = _parse_hermes_tool_calls(body_text)
-        if hermes_calls:
-            logger.debug(
-                "Recovered {} Hermes-XML tool call(s) from provider error body",
-                len(hermes_calls),
-            )
-            return LLMResponse(
-                content=None,
-                tool_calls=hermes_calls,
-                finish_reason="tool_calls",
-            )
-
         msg = f"Error: {body_text.strip()[:500]}" if body_text.strip() else f"Error calling LLM: {e}"
 
         text = f"{body_text} {e}".lower()
