@@ -62,7 +62,7 @@ class ConnectMcpTool(Tool):
 
         cfg = MCPServerConfig(command=command, args=args_list, env=env_dict)
 
-        before = set(self._registry.names())
+        before = set(self._registry.tool_names())
         try:
             new_stacks = await connect_mcp_servers({server_name: cfg}, self._registry)
         except Exception as e:
@@ -70,7 +70,7 @@ class ConnectMcpTool(Tool):
             return f"Failed to connect MCP server '{server_name}': {e}"
 
         self._stacks.update(new_stacks)
-        after = set(self._registry.names())
+        after = set(self._registry.tool_names())
         new_tools = sorted(after - before)
 
         if not new_tools:
