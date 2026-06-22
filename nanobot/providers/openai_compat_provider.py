@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import re
 import secrets
 import string
 import time
@@ -114,46 +113,6 @@ def _float_env(name: str, default: float) -> float:
 def _short_tool_id() -> str:
     """9-char alphanumeric ID compatible with all providers (incl. Mistral)."""
     return "".join(secrets.choice(_ALNUM) for _ in range(9))
-
-
-def _recover_hermes_xml_tool_calls(error_body: Any) -> list[ToolCallRequest] | None:
-    """Extract tool calls from a llama-server 'failed to parse input' error body.
-
-    When a thinking model (e.g. Qwen3) places a <tool_call> after a <think> block,
-    llama.cpp's peg-native parser fails with HTTP 500 and includes the raw model
-    output in the error message starting at the position of the first <tool_call>.
-    We parse the Hermes XML directly from the error body to recover.
-    """
-    # llama-server sends {"code": 500, "message": "failed to parse input at pos X: <raw>"}
-    # The OpenAI SDK may nest this under {"error": {...}} or surface it at top level.
-    message = ""
-    if isinstance(error_body, dict):
-        # Try flat format first (llama-server native), then OpenAI-nested format
-        message = str(error_body.get("message") or "")
-        if not message:
-            err = error_body.get("error") or {}
-            if isinstance(err, dict):
-                message = str(err.get("message", ""))
-    elif isinstance(error_body, str):
-        message = error_body
-
-    if not message:
-        return None
-
-    m = re.search(r"failed to parse input at pos \d+:\s*(.+)", message, re.IGNORECASE | re.DOTALL)
-    if not m:
-        return None
-
-    raw = m.group(1)
-    tool_calls = []
-    for tc in re.finditer(r"<tool_call>\s*<function=([^>]+)>(.*?)</function>", raw, re.DOTALL):
-        name = tc.group(1).strip()
-        args: dict[str, Any] = {}
-        for param in re.finditer(r"<parameter=([^>]+)>\s*(.*?)\s*</parameter>", tc.group(2), re.DOTALL):
-            args[param.group(1).strip()] = param.group(2).strip()
-        tool_calls.append(ToolCallRequest(id=_short_tool_id(), name=name, arguments=args))
-
-    return tool_calls or None
 
 
 def _get(obj: Any, key: str) -> Any:
@@ -1201,11 +1160,6 @@ class OpenAICompatProvider(LLMProvider):
             or getattr(getattr(e, "response", None), "text", None)
         )
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
-
-        recovered = _recover_hermes_xml_tool_calls(body)
-        if recovered:
-            logger.warning("Recovered {} tool call(s) from llama-server peg-native parse error", len(recovered))
-            return LLMResponse(content=None, tool_calls=recovered, finish_reason="tool_calls")
 
         msg = f"Error: {body_text.strip()[:500]}" if body_text.strip() else f"Error calling LLM: {e}"
 
