@@ -20,6 +20,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.session.manager import Session
 from nanobot.utils.gitstore import GitStore
 from nanobot.utils.helpers import (
+    _get_token_encoding,
     ensure_dir,
     estimate_message_tokens,
     estimate_prompt_tokens_chain,
@@ -655,7 +656,7 @@ class Consolidator:
         if budget <= 0:
             return truncate_text(text, _RAW_ARCHIVE_MAX_CHARS)
         try:
-            enc = tiktoken.get_encoding("cl100k_base")
+            enc = _get_token_encoding()
             tokens = enc.encode(text)
             if len(tokens) <= budget:
                 return text
