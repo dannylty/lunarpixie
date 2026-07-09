@@ -45,6 +45,7 @@ _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
 _SNIP_SAFETY_BUFFER = 1024
 _MICROCOMPACT_KEEP_RECENT = 10
+_MICROCOMPACT_BATCH = 10  # advance the compaction cut in batches to keep the prompt prefix stable
 _MICROCOMPACT_MIN_CHARS = 500
 _COMPACTABLE_TOOLS = frozenset({
     "read_file", "exec", "grep", "glob",
@@ -1084,7 +1085,17 @@ class AgentRunner:
         if len(compactable_indices) <= _MICROCOMPACT_KEEP_RECENT:
             return messages
 
-        stale = compactable_indices[: len(compactable_indices) - _MICROCOMPACT_KEEP_RECENT]
+        # Quantize the cut boundary so the stub set stays identical across
+        # consecutive requests. A per-call sliding window rewrites one more
+        # tool result on every iteration, which mutates the prompt prefix and
+        # forces prefix-cache servers (llama.cpp) to re-prefill tens of
+        # thousands of tokens per request.
+        cut = len(compactable_indices) - _MICROCOMPACT_KEEP_RECENT
+        cut = (cut // _MICROCOMPACT_BATCH) * _MICROCOMPACT_BATCH
+        if cut <= 0:
+            return messages
+
+        stale = compactable_indices[:cut]
         updated: list[dict[str, Any]] | None = None
         for idx in stale:
             msg = messages[idx]

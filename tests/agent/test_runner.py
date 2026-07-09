@@ -1958,9 +1958,13 @@ async def test_runner_backfill_only_mutates_model_context_not_returned_messages(
 @pytest.mark.asyncio
 async def test_microcompact_replaces_old_tool_results():
     """Tool results beyond _MICROCOMPACT_KEEP_RECENT should be summarized."""
-    from nanobot.agent.runner import AgentRunner, _MICROCOMPACT_KEEP_RECENT
+    from nanobot.agent.runner import (
+        AgentRunner,
+        _MICROCOMPACT_BATCH,
+        _MICROCOMPACT_KEEP_RECENT,
+    )
 
-    total = _MICROCOMPACT_KEEP_RECENT + 5
+    total = _MICROCOMPACT_KEEP_RECENT + _MICROCOMPACT_BATCH + 5
     long_content = "x" * 600
     messages: list[dict] = [{"role": "system", "content": "sys"}]
     for i in range(total):
@@ -1976,11 +1980,60 @@ async def test_microcompact_replaces_old_tool_results():
 
     result = AgentRunner._microcompact(messages)
     tool_msgs = [m for m in result if m.get("role") == "tool"]
-    stale_count = total - _MICROCOMPACT_KEEP_RECENT
+    # The cut is quantized to _MICROCOMPACT_BATCH so the stub set stays
+    # stable across consecutive requests (prefix-cache friendliness).
+    stale_count = (
+        (total - _MICROCOMPACT_KEEP_RECENT) // _MICROCOMPACT_BATCH
+    ) * _MICROCOMPACT_BATCH
     compacted = [m for m in tool_msgs if "omitted from context" in str(m.get("content", ""))]
     preserved = [m for m in tool_msgs if m.get("content") == long_content]
     assert len(compacted) == stale_count
-    assert len(preserved) == _MICROCOMPACT_KEEP_RECENT
+    assert len(preserved) == total - stale_count
+
+
+@pytest.mark.asyncio
+async def test_microcompact_stub_set_stable_across_new_tool_calls():
+    """Appending a tool result must not change which older results are stubbed
+    until a full batch accumulates — otherwise every request rewrites the
+    prompt prefix and prefix-cache servers re-prefill the whole context."""
+    from nanobot.agent.runner import (
+        AgentRunner,
+        _MICROCOMPACT_BATCH,
+        _MICROCOMPACT_KEEP_RECENT,
+    )
+
+    long_content = "x" * 600
+
+    def build(total: int) -> list[dict]:
+        msgs: list[dict] = [{"role": "system", "content": "sys"}]
+        for i in range(total):
+            msgs.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}],
+            })
+            msgs.append({
+                "role": "tool", "tool_call_id": f"c{i}", "name": "read_file",
+                "content": long_content,
+            })
+        return msgs
+
+    def stubbed_ids(msgs: list[dict]) -> set[str]:
+        return {
+            m["tool_call_id"]
+            for m in AgentRunner._microcompact(msgs)
+            if m.get("role") == "tool" and "omitted from context" in str(m.get("content", ""))
+        }
+
+    base = _MICROCOMPACT_KEEP_RECENT + _MICROCOMPACT_BATCH
+    before = stubbed_ids(build(base))
+    # Adding fewer than a full batch of new results must not change the stubs.
+    for extra in range(1, _MICROCOMPACT_BATCH):
+        assert stubbed_ids(build(base + extra)) == before
+    # A full batch later, the cut advances by exactly one batch.
+    after = stubbed_ids(build(base + _MICROCOMPACT_BATCH))
+    assert after > before
+    assert len(after) == len(before) + _MICROCOMPACT_BATCH
 
 
 @pytest.mark.asyncio
