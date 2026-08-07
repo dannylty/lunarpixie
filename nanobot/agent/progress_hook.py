@@ -218,5 +218,40 @@ class AgentProgressHook(AgentHook):
             u.get("cached_tokens", 0),
         )
 
+        if self._on_progress:
+            perf_hint = self._format_perf_hint(context)
+            if perf_hint:
+                await invoke_on_progress(
+                    self._on_progress,
+                    perf_hint,
+                    perf_hint=True,
+                )
+
+    @staticmethod
+    def _format_perf_hint(context: AgentHookContext) -> str:
+        """Render prefill/generation tokens-per-second and response time.
+
+        Empty when the provider reported none of these (most providers don't;
+        currently only llama.cpp-style ``timings_per_token`` responses do).
+        """
+        response = context.response
+        if response is None:
+            return ""
+        # response_time_s is populated by the runner for every response, so use
+        # the provider-reported TPS fields (llama.cpp-only, currently) to decide
+        # whether there's anything perf-related worth showing at all.
+        if response.prefill_tps is None and response.generation_tps is None:
+            return ""
+        parts: list[str] = []
+        if response.prefill_tps is not None:
+            parts.append(f"{response.prefill_tps:.1f} pf")
+        if response.generation_tps is not None:
+            parts.append(f"{response.generation_tps:.1f} tg")
+        if response.draft_acceptance_rate is not None:
+            parts.append(f"{response.draft_acceptance_rate:.0%} ar")
+        if response.response_time_s is not None:
+            parts.append(f"{response.response_time_s:.1f} s")
+        return " · ".join(parts)
+
     def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
         return self._strip_think(content)

@@ -25,6 +25,7 @@ def build_bus_progress_callback(
         content: str,
         *,
         tool_hint: bool = False,
+        perf_hint: bool = False,
         tool_events: list[dict[str, Any]] | None = None,
         file_edit_events: list[dict[str, Any]] | None = None,
         reasoning: bool = False,
@@ -37,6 +38,7 @@ def build_bus_progress_callback(
                 event=ProgressEvent(
                     content=content,
                     tool_hint=tool_hint,
+                    perf_hint=perf_hint,
                     reasoning_delta=reasoning,
                     reasoning_end=reasoning_end,
                     tool_events=tool_events,
@@ -50,6 +52,7 @@ def build_bus_progress_callback(
         content: str,
         *,
         tool_hint: bool = False,
+        perf_hint: bool = False,
         tool_events: list[dict[str, Any]] | None = None,
         file_edit_events: list[dict[str, Any]] | None = None,
         reasoning: bool = False,
@@ -58,6 +61,7 @@ def build_bus_progress_callback(
         await _publish_progress(
             content,
             tool_hint=tool_hint,
+            perf_hint=perf_hint,
             tool_events=tool_events,
             file_edit_events=file_edit_events,
             reasoning=reasoning,

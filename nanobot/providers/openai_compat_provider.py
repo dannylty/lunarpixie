@@ -968,6 +968,15 @@ class OpenAICompatProvider(LLMProvider):
                 if msg.get("role") == "assistant" and "reasoning_content" not in msg:
                     msg["reasoning_content"] = ""
 
+        # Note: we don't need to explicitly request llama.cpp's
+        # ``timings_per_token`` here — llama.cpp already includes a top-level
+        # ``timings`` block (with prompt/predicted-per-second) on the final
+        # non-streamed response and the final SSE chunk by default; that flag
+        # only controls whether *every* streamed chunk also gets per-token
+        # timing data, which ``_extract_timings`` doesn't need since it scans
+        # all chunks for the one that has it. Forcing the field on for every
+        # request would pollute ``extra_body`` for non-llama.cpp providers.
+
         # Merge user-configured extra_body last so it can override or
         # extend provider-specific defaults (e.g. chat_template_kwargs,
         # guided_json, repetition_penalty).  Uses recursive merge so
@@ -1376,6 +1385,51 @@ class OpenAICompatProvider(LLMProvider):
 
         return result
 
+    @classmethod
+    def _extract_timings(
+        cls, response: Any
+    ) -> tuple[float | None, float | None, float | None]:
+        """Extract perf metrics from llama.cpp timings.
+
+        Returns ``(prefill_tps, generation_tps, draft_acceptance_rate)`` or all
+        ``None`` if not available. llama.cpp reports ``timings.prompt_per_second``
+        and ``timings.predicted_per_second`` when ``timings_per_token: true`` is
+        set. When speculative decoding is active it also reports ``draft_n``
+        (draft tokens proposed) and ``draft_n_accepted`` (accepted); the
+        acceptance rate is their ratio, clamped to ``[0, 1]``.
+        """
+        response_map = cls._maybe_mapping(response)
+        if response_map is None:
+            return None, None, None
+
+        timings = response_map.get("timings")
+        if not timings or not isinstance(timings, dict):
+            return None, None, None
+
+        prefill_tps: float | None = None
+        generation_tps: float | None = None
+        draft_acceptance_rate: float | None = None
+
+        pp = timings.get("prompt_per_second")
+        if pp and isinstance(pp, (int, float)) and pp > 0:
+            prefill_tps = round(pp, 2)
+
+        gp = timings.get("predicted_per_second")
+        if gp and isinstance(gp, (int, float)) and gp > 0:
+            generation_tps = round(gp, 2)
+
+        draft_n = timings.get("draft_n")
+        draft_accepted = timings.get("draft_n_accepted")
+        if (
+            isinstance(draft_n, (int, float))
+            and draft_n > 0
+            and isinstance(draft_accepted, (int, float))
+            and draft_accepted >= 0
+        ):
+            draft_acceptance_rate = round(min(draft_accepted / draft_n, 1.0), 4)
+
+        return prefill_tps, generation_tps, draft_acceptance_rate
+
     @staticmethod
     def _get_nested_int(obj: object, path: tuple[str, ...]) -> int:
         """Drill into *obj* by *path* segments and return an ``int`` value.
@@ -1411,11 +1465,15 @@ class OpenAICompatProvider(LLMProvider):
                     response_map.get("reasoning_content")
                 )
                 if content is not None:
+                    prefill_tps, generation_tps, draft_ar = self._extract_timings(response_map)
                     return LLMResponse(
                         content=content,
                         reasoning_content=reasoning_content,
                         finish_reason=str(response_map.get("finish_reason") or "stop"),
                         usage=self._extract_usage(response_map),
+                        prefill_tps=prefill_tps,
+                        generation_tps=generation_tps,
+                        draft_acceptance_rate=draft_ar,
                     )
                 return LLMResponse(
                     content="Error: API returned empty choices.",
@@ -1480,12 +1538,16 @@ class OpenAICompatProvider(LLMProvider):
             if not parsed_tool_calls:
                 content, parsed_tool_calls = _extract_text_tool_calls(content)
 
+            prefill_tps, generation_tps, draft_ar = self._extract_timings(response_map)
             return LLMResponse(
                 content=content,
                 tool_calls=parsed_tool_calls,
                 finish_reason=finish_reason,
                 usage=self._extract_usage(response_map),
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+                prefill_tps=prefill_tps,
+                generation_tps=generation_tps,
+                draft_acceptance_rate=draft_ar,
             )
 
         if not response.choices:
@@ -1691,12 +1753,31 @@ class OpenAICompatProvider(LLMProvider):
         if not tool_calls:
             content, tool_calls = _extract_text_tool_calls(content)
 
+        # llama.cpp emits the perf timings block on the final SSE chunk when
+        # timings_per_token was requested; scan chunks for it.
+        prefill_tps: float | None = None
+        generation_tps: float | None = None
+        draft_ar: float | None = None
+        for chunk in chunks:
+            chunk_map = cls._maybe_mapping(chunk)
+            if chunk_map is not None:
+                pt, gt, dar = cls._extract_timings(chunk_map)
+                if pt is not None:
+                    prefill_tps = pt
+                if gt is not None:
+                    generation_tps = gt
+                if dar is not None:
+                    draft_ar = dar
+
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
+            prefill_tps=prefill_tps,
+            generation_tps=generation_tps,
+            draft_acceptance_rate=draft_ar,
         )
 
     @classmethod

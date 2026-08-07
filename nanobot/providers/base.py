@@ -272,6 +272,14 @@ class LLMResponse:
     error_code: str | None = None  # Provider/code semantic, e.g. rate_limit_exceeded.
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
+    # Performance metrics (tokens per second), populated when the provider reports timings
+    # (e.g. llama.cpp with ``timings_per_token``).
+    prefill_tps: float | None = None
+    generation_tps: float | None = None
+    # Speculative-decoding draft acceptance rate (0..1), when the provider reports it.
+    draft_acceptance_rate: float | None = None
+    # Total wall-clock response time in seconds, set by the runner.
+    response_time_s: float | None = None
 
     @property
     def has_tool_calls(self) -> bool:

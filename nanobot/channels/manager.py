@@ -64,6 +64,7 @@ _RESTART_NOTICE_START_POLL_S = 0.25
 _BOOL_CAMEL_ALIASES: dict[str, str] = {
     "send_progress": "sendProgress",
     "send_tool_hints": "sendToolHints",
+    "send_perf_hints": "sendPerfHints",
     "show_reasoning": "showReasoning",
 }
 
@@ -197,6 +198,9 @@ class ChannelManager:
         channel.send_tool_hints = self._resolve_bool_override(
             section, "send_tool_hints", tool_hints_default,
         )
+        channel.send_perf_hints = self._resolve_bool_override(
+            section, "send_perf_hints", self.config.channels.send_perf_hints,
+        )
         channel.show_reasoning = self._resolve_bool_override(
             section, "show_reasoning", self.config.channels.show_reasoning,
         )
@@ -315,12 +319,16 @@ class ChannelManager:
                     name,
                 )
 
-    def _should_send_progress(self, channel_name: str, *, tool_hint: bool = False) -> bool:
-        """Return whether progress (or tool-hints) may be sent to *channel_name*."""
+    def _should_send_progress(
+        self, channel_name: str, *, tool_hint: bool = False, perf_hint: bool = False,
+    ) -> bool:
+        """Return whether progress (or tool-hints / perf-hints) may be sent to *channel_name*."""
         ch = self.channels.get(channel_name)
         if ch is None:
             logger.debug("Progress check for unknown channel: {}", channel_name)
             return False
+        if perf_hint:
+            return ch.send_perf_hints
         return ch.send_tool_hints if tool_hint else ch.send_progress
 
     def _resolve_bool_override(self, section: Any, key: str, default: bool) -> bool:
@@ -701,11 +709,15 @@ class ChannelManager:
                     continue
 
                 if progress_event:
+                    if progress_event.perf_hint and not self._should_send_progress(
+                        msg.channel, perf_hint=True,
+                    ):
+                        continue
                     if progress_event.tool_hint and not self._should_send_progress(
                         msg.channel, tool_hint=True,
                     ):
                         continue
-                    if not progress_event.tool_hint and not self._should_send_progress(
+                    if not progress_event.tool_hint and not progress_event.perf_hint and not self._should_send_progress(
                         msg.channel, tool_hint=False,
                     ):
                         continue

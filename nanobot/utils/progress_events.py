@@ -27,17 +27,25 @@ def _on_progress_accepts(cb: Callable[..., Any], name: str) -> bool:
     return name in sig.parameters
 
 
+def on_progress_accepts_perf_hint(cb: Callable[..., Any]) -> bool:
+    return _on_progress_accepts(cb, "perf_hint")
+
+
 async def invoke_on_progress(
     on_progress: Callable[..., Awaitable[None]],
     content: str,
     *,
     tool_hint: bool = False,
     tool_events: list[dict[str, Any]] | None = None,
+    perf_hint: bool = False,
 ) -> None:
+    accepts_perf = on_progress_accepts_perf_hint(on_progress)
+    kwargs: dict[str, Any] = {"tool_hint": tool_hint}
+    if perf_hint and accepts_perf:
+        kwargs["perf_hint"] = perf_hint
     if tool_events and on_progress_accepts_tool_events(on_progress):
-        await on_progress(content, tool_hint=tool_hint, tool_events=tool_events)
-        return
-    await on_progress(content, tool_hint=tool_hint)
+        kwargs["tool_events"] = tool_events
+    await on_progress(content, **kwargs)
 
 
 async def invoke_file_edit_progress(

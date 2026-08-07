@@ -30,6 +30,7 @@ class BaseChannel(ABC):
     display_name: str = "Base"
     send_progress: bool = True
     send_tool_hints: bool = True
+    send_perf_hints: bool = True
     show_reasoning: bool = True
 
     def __init__(self, config: Any, bus: MessageBus):

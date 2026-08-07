@@ -22,6 +22,7 @@ class OutboundEvent:
 class ProgressEvent(OutboundEvent):
     content: str = ""
     tool_hint: bool = False
+    perf_hint: bool = False
     reasoning: bool = False
     reasoning_delta: bool = False
     reasoning_end: bool = False
@@ -197,12 +198,14 @@ def _legacy_event_from_metadata(msg: OutboundMessage) -> OutboundEvent | None:
         or meta.get("_reasoning")
         or meta.get("_file_edit_events")
         or meta.get("_tool_events")
+        or meta.get("_perf_hint")
     ):
         tool_events = meta.get("_tool_events")
         file_edit_events = meta.get("_file_edit_events")
         return ProgressEvent(
             content=msg.content,
             tool_hint=bool(meta.get("_tool_hint")),
+            perf_hint=bool(meta.get("_perf_hint")),
             reasoning=bool(meta.get("_reasoning")),
             reasoning_delta=bool(meta.get("_reasoning_delta")),
             reasoning_end=bool(meta.get("_reasoning_end")),

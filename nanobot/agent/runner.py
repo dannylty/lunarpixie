@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -1027,6 +1028,7 @@ class AgentRunner:
             if is_streaming_request and timeout_s is not None
             else timeout_s
         )
+        request_started_at = time.monotonic()
         try:
             response = (
                 await coro if outer_timeout_s is None
@@ -1045,6 +1047,7 @@ class AgentRunner:
                     finish_reason="error",
                     error_kind="timeout",
                 )
+        response.response_time_s = round(time.monotonic() - request_started_at, 2)
         # chat_stream_with_retry may recover internally, so only fail unfinished
         # hosted calls after the provider returns its final error response.
         if response.finish_reason == "error":
