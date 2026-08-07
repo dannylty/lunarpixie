@@ -96,6 +96,26 @@ def test_unprocessed_history_injected_into_system_prompt(tmp_path) -> None:
     assert re.search(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]", prompt)
 
 
+def test_include_memory_recent_history_false_omits_section_even_with_unprocessed_entries(
+    tmp_path,
+) -> None:
+    """The include_memory_recent_history=False flag suppresses the section
+    outright, independent of Dream's cursor / unprocessed-entry state."""
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    builder.memory.append_history("User asked about weather in Tokyo")
+    builder.memory.append_history("Agent fetched forecast via web_search")
+
+    prompt = builder.build_system_prompt(include_memory_recent_history=False)
+    assert "# Recent History" not in prompt
+    assert "User asked about weather in Tokyo" not in prompt
+
+    # Sanity: with the flag left at its default (True), the section does appear.
+    prompt_default = builder.build_system_prompt()
+    assert "# Recent History" in prompt_default
+
+
 def test_recent_history_injection_is_session_scoped(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
     builder = ContextBuilder(workspace)

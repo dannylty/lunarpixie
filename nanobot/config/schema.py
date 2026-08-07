@@ -166,6 +166,7 @@ class AgentDefaults(Base):
         serialization_alias="consolidationRatio",
     )  # Consolidation target ratio (0.5 = 50% of budget retained after compression)
     dream: DreamConfig = Field(default_factory=DreamConfig)
+    include_recent_history: bool = True  # Inject the "# Recent History" section into the prompt (independent of Dream)
 
     @model_validator(mode="before")
     @classmethod
