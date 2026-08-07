@@ -24,6 +24,7 @@ from nanobot.providers.base import LLMUsage
 class ProgressEvent(AgentEvent):
     content: str = ""
     tool_hint: bool = False
+    perf_hint: bool = False
     reasoning: bool = False
     reasoning_delta: bool = False
     reasoning_end: bool = False

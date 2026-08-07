@@ -41,6 +41,7 @@ def output_events(
         if on_progress is not None and _on_progress_accepts(on_progress, name)
     }
     merge_next = on_stream_end is not None and _on_progress_accepts(on_stream_end, "merge_next")
+    accepts_perf_hint = on_progress is not None and _on_progress_accepts(on_progress, "perf_hint")
 
     def accepts(event_type: type[AgentEvent]) -> bool:
         if issubclass(event_type, FileEditEvent) and on_progress is not None:
@@ -67,6 +68,8 @@ def output_events(
             if event.tool_events and not event.tool_hint and "tool_events" not in progress_fields:
                 return
             kwargs: dict[str, Any] = {"tool_hint": event.tool_hint}
+            if event.perf_hint and accepts_perf_hint:
+                kwargs["perf_hint"] = event.perf_hint
             if event.tool_events and "tool_events" in progress_fields:
                 kwargs["tool_events"] = event.tool_events
             await on_progress(event.content, **kwargs)

@@ -1003,6 +1003,7 @@ class AgentRunner:
             raise
         _pause_generation()
         await _close_native_reasoning()
+        response.response_time_s = round(time.perf_counter() - request_started_at, 2)
         if first_output_at is not None:
             response.ttft_ms = max(0, round((first_output_at - request_started_at) * 1000))
         if generation_elapsed_s > 0:
