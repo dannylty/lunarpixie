@@ -2418,3 +2418,237 @@ def test_markdown_to_html_code_block_same_line_no_newline() -> None:
 
     stripped = _strip_md_block(text)
     assert stripped == "Use <tag> here"
+
+
+@pytest.mark.asyncio
+async def test_tool_hint_consolidation_edits_single_message() -> None:
+    """Consecutive tool hints edit one numbered, blockquoted message."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"], tool_hint_consolidate=True,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    for hint in ("read_file(\"a.py\")", "grep(\"foo\")", "exec(\"ls && pwd\")"):
+        await channel.send(
+            OutboundMessage(
+                channel="telegram", chat_id="123", content=hint,
+                event=ProgressEvent(content=hint, tool_hint=True),
+            )
+        )
+
+    # Only one message was created; the rest were edits.
+    assert len(channel._app.bot.sent_messages) == 1
+    assert channel._app.bot.edit_message_text.await_count == 2
+
+    final_text = channel._app.bot.edit_message_text.await_args.kwargs["text"]
+    assert "1. read_file" in final_text
+    assert "2. grep" in final_text
+    assert "3. exec(\"ls &amp;&amp; pwd\")" in final_text  # HTML-escaped
+    assert final_text.count("<blockquote expandable>") == 3
+
+
+@pytest.mark.asyncio
+async def test_tool_hint_consolidation_sliding_window() -> None:
+    """Only the most recent tool_hint_window_size hints are kept, numbering keeps climbing."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"],
+            tool_hint_consolidate=True, tool_hint_window_size=2,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    for i in range(4):
+        hint = f"tool_{i}"
+        await channel.send(
+            OutboundMessage(
+                channel="telegram", chat_id="123", content=hint,
+                event=ProgressEvent(content=hint, tool_hint=True),
+            )
+        )
+
+    final_text = channel._app.bot.edit_message_text.await_args.kwargs["text"]
+    assert "tool_0" not in final_text
+    assert "tool_1" not in final_text
+    assert "3. tool_2" in final_text
+    assert "4. tool_3" in final_text
+
+
+@pytest.mark.asyncio
+async def test_tool_hint_consolidation_finalizes_on_final_reply() -> None:
+    """The final (non-progress) reply finalizes the buffer; the next turn's hint posts new."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"], tool_hint_consolidate=True,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="hint one",
+            event=ProgressEvent(content="hint one", tool_hint=True),
+        )
+    )
+    # Genuine final reply (no ProgressEvent) must finalize the buffer.
+    await channel.send(OutboundMessage(channel="telegram", chat_id="123", content="final answer"))
+
+    assert 123 not in channel._tool_hint_bufs
+
+    # Next turn's first hint should post a brand-new message, not edit the old one.
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="hint two",
+            event=ProgressEvent(content="hint two", tool_hint=True),
+        )
+    )
+    # msg1 = consolidated hint, msg2 = final answer, msg3 = fresh hint message.
+    assert len(channel._app.bot.sent_messages) == 3
+    new_text = channel._app.bot.sent_messages[-1]["text"]
+    assert "1. hint two" in new_text
+
+
+@pytest.mark.asyncio
+async def test_tool_hint_consolidation_not_finalized_by_perf_hint() -> None:
+    """Interstitial perf-hint progress messages must not reset the sliding window mid-turn."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"], tool_hint_consolidate=True,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="hint one",
+            event=ProgressEvent(content="hint one", tool_hint=True),
+        )
+    )
+    # A perf hint is itself a ProgressEvent (not a genuine final reply) and
+    # must not finalize the tool-hint buffer.
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="12.3 pf · 45.6 tg",
+            event=ProgressEvent(content="12.3 pf · 45.6 tg", perf_hint=True),
+        )
+    )
+    assert 123 in channel._tool_hint_bufs
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="hint two",
+            event=ProgressEvent(content="hint two", tool_hint=True),
+        )
+    )
+
+    # Consolidated hint message stays a single message edited in place; the
+    # perf hint is its own separate, non-consolidated message.
+    assert len(channel._app.bot.sent_messages) == 2
+    assert channel._app.bot.edit_message_text.await_count == 1
+    final_text = channel._app.bot.edit_message_text.await_args.kwargs["text"]
+    assert "1. hint one" in final_text
+    assert "2. hint two" in final_text
+
+
+@pytest.mark.asyncio
+async def test_perf_hint_rendered_as_blockquote_without_consolidation() -> None:
+    """Perf hints render as blockquotes even when tool_hint_consolidate is off."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="12.3 pf · 45.6 tg",
+            event=ProgressEvent(content="12.3 pf · 45.6 tg", perf_hint=True),
+        )
+    )
+
+    assert len(channel._app.bot.sent_messages) == 1
+    sent = channel._app.bot.sent_messages[0]
+    assert sent["text"] == "<blockquote expandable>12.3 pf · 45.6 tg</blockquote>"
+    assert sent["parse_mode"] == "HTML"
+
+
+@pytest.mark.asyncio
+async def test_tool_hint_consolidation_disabled_by_default_sends_each_hint_separately() -> None:
+    """Without tool_hint_consolidate, each tool hint is its own message (existing behavior)."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    for hint in ("read_file(\"a.py\")", "grep(\"foo\")"):
+        await channel.send(
+            OutboundMessage(
+                channel="telegram", chat_id="123", content=hint,
+                event=ProgressEvent(content=hint, tool_hint=True),
+            )
+        )
+
+    assert len(channel._app.bot.sent_messages) == 2
+    assert not channel._tool_hint_bufs
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_end_finalizes_tool_hint_when_not_resuming() -> None:
+    """The streaming stream_end path must finalize the consolidated hint buffer too,
+    since it bypasses send() entirely."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"], tool_hint_consolidate=True,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="hint one",
+            event=ProgressEvent(content="hint one", tool_hint=True),
+        )
+    )
+    assert 123 in channel._tool_hint_bufs
+
+    await channel.send_delta("123", "", stream_id="s1", stream_end=True, resuming=False)
+
+    assert 123 not in channel._tool_hint_bufs
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_end_does_not_finalize_tool_hint_when_resuming() -> None:
+    """resuming=True means more tool calls follow; the buffer must survive."""
+    channel = TelegramChannel(
+        TelegramConfig(
+            enabled=True, token="123:abc", allow_from=["*"], tool_hint_consolidate=True,
+        ),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram", chat_id="123", content="hint one",
+            event=ProgressEvent(content="hint one", tool_hint=True),
+        )
+    )
+    assert 123 in channel._tool_hint_bufs
+
+    await channel.send_delta("123", "", stream_id="s1", stream_end=True, resuming=True)
+
+    assert 123 in channel._tool_hint_bufs

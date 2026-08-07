@@ -7,7 +7,7 @@ import re
 import time
 import unicodedata
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, TypeAlias, TypeVar, cast
@@ -355,6 +355,14 @@ class _StreamBuf:
 
 
 @dataclass
+class _ToolHintBuf:
+    """Per-chat consolidated tool hint buffer with sliding window."""
+    hints: list[tuple[int, str]] = field(default_factory=list)
+    message_id: int | None = None
+    global_index: int = 0  # monotonic counter for numbering across windows
+
+
+@dataclass
 class _QueuedTelegramUpdate:
     """Telegram update staged for per-session ordered processing."""
 
@@ -383,6 +391,9 @@ class TelegramConfig(Base):
     # Opt in to Bot API 10.1 sendRichMessage for richer markdown rendering.
     rich_messages: bool = False
     stream_edit_interval: float = Field(default=_STREAM_EDIT_INTERVAL_DEFAULT, ge=0.1)
+    # Consolidate tool hints into a single editable message with a sliding window.
+    tool_hint_consolidate: bool = False
+    tool_hint_window_size: int = Field(default=3, ge=1, le=20)
     webhook_url: str = ""
     webhook_listen_host: str = "127.0.0.1"
     webhook_listen_port: int = Field(default=8081, ge=1, le=65535)
@@ -474,6 +485,7 @@ class TelegramChannel(BaseChannel):
         self._bot_user_id: int | None = None
         self._bot_username: str | None = None
         self._stream_bufs: dict[str, _StreamBuf] = {}  # chat_id -> streaming state
+        self._tool_hint_bufs: dict[int, _ToolHintBuf] = {}  # chat_id -> consolidated tool hint state
         self._inbound_buffers: dict[str, list[_QueuedTelegramUpdate]] = {}
         self._inbound_workers: dict[str, asyncio.Task[None]] = {}
         self._rich_send_disabled: bool = False  # Latch off if Bot API < 10.1
@@ -838,7 +850,26 @@ class TelegramChannel(BaseChannel):
 
         # Send text content
         if msg.content and msg.content != "[empty message]":
-            render_as_blockquote = bool(progress_event and progress_event.tool_hint)
+            is_tool_hint = bool(progress_event and progress_event.tool_hint)
+            is_perf_hint = bool(progress_event and progress_event.perf_hint)
+            render_as_blockquote = is_tool_hint or is_perf_hint
+
+            # Handle consolidated tool hints: numbered sliding-window buffer
+            # edited in place instead of posting a new message per tool call.
+            if is_tool_hint and self.config.tool_hint_consolidate:
+                await self._send_consolidated_tool_hint(chat_id, msg.content, thread_kwargs)
+                return
+
+            # Only the genuine final reply finalizes the consolidated tool
+            # hint. Interstitial progress messages (perf hints, intermediate
+            # thoughts) must NOT reset the sliding-window buffer mid-turn —
+            # doing so would make every subsequent hint post a new message
+            # instead of editing the consolidated one. The hint message is
+            # left in the chat as a persistent record; we only drop the
+            # buffer so the next turn starts a fresh one.
+            if self.config.tool_hint_consolidate and progress_event is None:
+                self._finalize_tool_hint(chat_id)
+
             buttons = cast(list[list[str]], getattr(msg, "buttons", None) or [])
             reply_markup = self._build_keyboard(buttons) if buttons else None
             text = msg.content
@@ -941,6 +972,93 @@ class TelegramChannel(BaseChannel):
                 self.logger.exception("Error sending message")
                 raise
 
+    async def _send_consolidated_tool_hint(
+        self, chat_id: int, hint: str, thread_kwargs: dict[str, int]
+    ) -> None:
+        """Add a tool hint to the sliding window and send/edit the consolidated message."""
+        if not self._app:
+            return
+
+        buf = self._tool_hint_bufs.get(chat_id)
+        if buf is None:
+            buf = _ToolHintBuf()
+            self._tool_hint_bufs[chat_id] = buf
+
+        window_size = self.config.tool_hint_window_size
+        buf.global_index += 1
+        buf.hints.append((buf.global_index, hint))
+        if len(buf.hints) > window_size:
+            buf.hints = buf.hints[-window_size:]
+
+        # Build consolidated text: numbered blockquotes. The number goes
+        # INSIDE the blockquote — Telegram renders <blockquote> as a
+        # block-level element, so anything outside it is pushed to its own
+        # line, which looks broken. The hint text is tool-derived and may
+        # contain &, <, > (e.g. `exec` with `&&`, code in edit/grep hints);
+        # it MUST be HTML-escaped or Telegram rejects the whole message with
+        # BadRequest and the consolidated hint silently fails to render.
+        consolidated = "\n".join(
+            f"<blockquote expandable>{idx}. {_escape_telegram_html(text)}</blockquote>"
+            for idx, text in buf.hints
+        )
+
+        try:
+            if buf.message_id is None:
+                # First hint: send new message
+                msg = await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=chat_id,
+                    text=consolidated,
+                    parse_mode="HTML",
+                    **thread_kwargs,
+                )
+                buf.message_id = msg.message_id
+            else:
+                # Subsequent hints: edit existing message
+                await self._call_with_retry(
+                    self._app.bot.edit_message_text,
+                    chat_id=chat_id,
+                    message_id=buf.message_id,
+                    text=consolidated,
+                    parse_mode="HTML",
+                )
+        except BadRequest as e:
+            if self._is_not_modified_error(e):
+                self.logger.debug("Tool hint message already up-to-date for {}", chat_id)
+            else:
+                # HTML parse / entity errors must not make hints silently vanish.
+                # Retry once as plain text (no parse_mode) so the hint still shows.
+                self.logger.warning(
+                    "Consolidated tool hint HTML rejected ({}); retrying as plain text", e
+                )
+                plain = "\n".join(f"{idx}. {text}" for idx, text in buf.hints)
+                try:
+                    if buf.message_id is None:
+                        msg = await self._call_with_retry(
+                            self._app.bot.send_message,
+                            chat_id=chat_id, text=plain, **thread_kwargs,
+                        )
+                        buf.message_id = msg.message_id
+                    else:
+                        await self._call_with_retry(
+                            self._app.bot.edit_message_text,
+                            chat_id=chat_id, message_id=buf.message_id, text=plain,
+                        )
+                except Exception:
+                    self.logger.exception("Plain-text tool hint fallback also failed")
+        except Exception:
+            self.logger.exception("Error sending consolidated tool hint")
+
+    def _finalize_tool_hint(self, chat_id: int) -> None:
+        """Finalize the consolidated tool hint for this turn.
+
+        The hint message is intentionally left in the chat as a persistent
+        record of what tools ran. We only drop the per-chat buffer so the
+        next turn's first hint posts a new message instead of editing the
+        previous (now-finalized) one.
+        """
+        self._tool_hint_bufs.pop(chat_id, None)
+
     @staticmethod
     def _is_not_modified_error(exc: Exception) -> bool:
         return isinstance(exc, BadRequest) and "message is not modified" in str(exc).lower()
@@ -967,6 +1085,19 @@ class TelegramChannel(BaseChannel):
                 return
             stream_end = False
         if stream_end:
+            # End of a streamed reply. resuming=False means this is the final
+            # response (no more tool calls). Finalize the consolidated tool
+            # hint here too — the non-streaming send() path is bypassed when
+            # streaming is on, so without this the buffer is never dropped
+            # and the NEXT turn keeps editing the previous hint message with
+            # a continued index. Done before the stream-buf guards/early
+            # returns so it runs regardless of stream-buffer state.
+            # NOTE: key by int_chat_id — send() stores the buffer under
+            # int(msg.chat_id), so finalizing with the str chat_id would pop
+            # the wrong key and leave the buffer alive.
+            if self.config.tool_hint_consolidate and not resuming:
+                self._finalize_tool_hint(int_chat_id)
+
             buf = self._stream_bufs.get(chat_id)
             if not buf or not buf.message_id or not buf.text:
                 return
