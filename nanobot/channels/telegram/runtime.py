@@ -577,6 +577,7 @@ class TelegramChannel(BaseChannel):
         self._last_poll_ok: float = 0.0  # monotonic time of last getUpdates round trip
         self._app_ready = asyncio.Event()  # cleared while the app is being rebuilt
         self._teardown_lock = asyncio.Lock()
+        self._reasoning_bufs: dict[str, _StreamBuf] = {}  # chat_id -> reasoning streaming state
 
     def _require_app(self) -> TelegramApplication:
         if self._app is None:
@@ -1173,7 +1174,7 @@ class TelegramChannel(BaseChannel):
         if msg.content and msg.content != "[empty message]":
             is_tool_hint = bool(progress_event and progress_event.tool_hint)
             is_perf_hint = bool(progress_event and progress_event.perf_hint)
-            render_as_blockquote = is_tool_hint or is_perf_hint
+            render_as_blockquote = is_tool_hint
 
             # Handle consolidated tool hints: numbered sliding-window buffer
             # edited in place instead of posting a new message per tool call.
@@ -1647,6 +1648,99 @@ class TelegramChannel(BaseChannel):
                     return
                 self.logger.warning("Stream edit failed: {}", e)
                 raise
+
+
+    async def send_reasoning_delta(
+        self,
+        chat_id: str,
+        delta: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        stream_id: str | None = None,
+    ) -> None:
+        """Stream a chunk of model reasoning as an expandable blockquote.
+
+        Throttled the same way as ``send_delta``'s regular streaming preview:
+        every delta is buffered, but Telegram's ``edit_message_text`` is only
+        called once per ``stream_edit_interval``. Editing on every delta (the
+        original version of this method) made reasoning appear to stream
+        word-by-word at the cost of one HTTP round-trip per word — throttling
+        it batches many deltas into each edit instead, same as the main
+        streaming path already does.
+        """
+        if not self._app or not delta:
+            return
+        int_chat_id = int(chat_id)
+        buf = self._reasoning_bufs.get(chat_id)
+        if buf is None:
+            buf = _StreamBuf()
+            self._reasoning_bufs[chat_id] = buf
+        buf.text += delta
+        meta = metadata or {}
+        thread_kwargs: dict[str, int] = {}
+        if message_thread_id := meta.get("message_thread_id"):
+            thread_kwargs["message_thread_id"] = message_thread_id
+
+        now = time.monotonic()
+        if buf.message_id is not None and (now - buf.last_edit) < self.config.stream_edit_interval:
+            return  # Buffered; will be flushed by a later delta or send_reasoning_end.
+
+        html = _tool_hint_to_telegram_blockquote(buf.text)
+        try:
+            if buf.message_id is None:
+                msg = await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=int_chat_id,
+                    text=html,
+                    parse_mode="HTML",
+                    **thread_kwargs,
+                )
+                buf.message_id = msg.message_id
+            else:
+                await self._call_with_retry(
+                    self._app.bot.edit_message_text,
+                    chat_id=int_chat_id,
+                    message_id=buf.message_id,
+                    text=html,
+                    parse_mode="HTML",
+                )
+            buf.last_edit = now
+        except Exception as e:
+            if self._is_not_modified_error(e):
+                buf.last_edit = now
+                return
+            self.logger.warning("Reasoning delta send/edit failed: {}", e)
+
+    async def send_reasoning_end(
+        self,
+        chat_id: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        stream_id: str | None = None,
+    ) -> None:
+        """Finalize the reasoning stream: flush any throttled-and-buffered
+        text that hasn't been sent yet, then clean up the buffer.
+
+        Because send_reasoning_delta only edits at most once per
+        stream_edit_interval, the final few deltas of a turn are commonly
+        still sitting unsent in buf.text when the stream ends — without this
+        flush, the visible reasoning block would silently cut off mid-word.
+        """
+        buf = self._reasoning_bufs.pop(chat_id, None)
+        if not buf or buf.message_id is None or not self._app:
+            return
+        html = _tool_hint_to_telegram_blockquote(buf.text)
+        try:
+            await self._call_with_retry(
+                self._app.bot.edit_message_text,
+                chat_id=int(chat_id),
+                message_id=buf.message_id,
+                text=html,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            if not self._is_not_modified_error(e):
+                self.logger.warning("Reasoning end flush failed: {}", e)
 
     async def _flush_stream_overflow(
         self,
