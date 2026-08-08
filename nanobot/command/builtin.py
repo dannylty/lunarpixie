@@ -80,6 +80,13 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "archive",
     ),
     BuiltinCommandSpec(
+        "/clear",
+        "Clear chat",
+        "Discard this conversation and start fresh, without consolidating it into memory.",
+        "eraser",
+        lifecycle="finalize_active_turn",
+    ),
+    BuiltinCommandSpec(
         "/stop",
         "Stop current task",
         "Cancel the active agent turn for this chat.",
@@ -366,6 +373,25 @@ async def cmd_compact(ctx: CommandContext) -> None:
         refreshed = loop.sessions.get_or_create(ctx.key)
         refreshed.provider_state = None
         loop.sessions.save(refreshed)
+async def cmd_clear(ctx: CommandContext) -> OutboundMessage:
+    """Stop active task, discard the conversation, and start fresh.
+
+    Unlike /new, this never archives/consolidates the discarded messages —
+    it's for throwing away a conversation you don't want summarized into
+    memory at all (e.g. an experiment, a wrong turn, something sensitive),
+    not for normal context-window management.
+    """
+    loop = ctx.loop
+    await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    session.clear()
+    loop.sessions.save(session)
+    loop.sessions.invalidate(session.key)
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content="Conversation cleared.",
+        metadata=dict(ctx.msg.metadata or {})
+    )
 
 
 def _format_preset_names(names: list[str]) -> str:
@@ -1076,6 +1102,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
     router.exact("/compact", cmd_compact)
+    router.exact("/clear", cmd_clear)
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
