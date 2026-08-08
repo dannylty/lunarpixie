@@ -1,0 +1,1 @@
+"""NATS bridge channel package."""
