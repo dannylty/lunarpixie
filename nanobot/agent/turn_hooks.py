@@ -30,7 +30,7 @@ class AgentTurnHookSpec:
     metadata: dict[str, Any] | None = None
     session_key: str | None = None
     workspace: Path | None = None
-    tool_hint_max_length: int = 40
+    tool_hint_max_length: int = 500
     registered_hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
     turn_hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
     registered_hooks: list[AgentHook] = field(default_factory=list)

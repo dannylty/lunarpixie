@@ -28,7 +28,7 @@ class AgentProgressHook(AgentHook):
         *,
         streaming: bool = False,
         session_key: str | None = None,
-        tool_hint_max_length: int = 40,
+        tool_hint_max_length: int = 500,
     ) -> None:
         super().__init__(reraise=True)
         self._publish = events.publish

@@ -132,7 +132,7 @@ class AgentDefaults(Base):
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     tool_hint_max_length: int = Field(
-        default=40,
+        default=500,
         ge=20,
         le=500,
         validation_alias=AliasChoices("toolHintMaxLength"),
