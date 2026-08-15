@@ -195,6 +195,45 @@ def _tool_hint_to_telegram_blockquote(text: str) -> str:
     return f"<blockquote expandable>{_escape_telegram_html(text)}</blockquote>" if text else ""
 
 
+_REASONING_ELISION_MARKER = "[…earlier reasoning elided…]\n"
+
+
+def _reasoning_to_telegram_blockquote(
+    text: str, max_html_len: int = TELEGRAM_HTML_MAX_LEN,
+) -> str:
+    """Render reasoning as a blockquote that always fits Telegram's limit.
+
+    Reasoning is a live progress view of a single turn, so unlike the answer
+    itself it is never split across messages -- that would bury the actual
+    reply under pages of thinking. Instead the *tail* is kept and the older
+    head is replaced with a marker: the interesting part of a thought stream
+    is where it currently is, not where it started.
+
+    The cut is measured on the rendered HTML, not the raw text, because
+    escaping expands it (``&`` -> ``&amp;``) by an amount that depends on the
+    content -- so a raw-character budget can still overflow after escaping.
+    """
+    html = _tool_hint_to_telegram_blockquote(text)
+    if len(html) <= max_html_len:
+        return html
+
+    # Largest tail of `text` whose rendered blockquote still fits. Binary
+    # search rather than a fixed ratio so pathological input (all `&`) works.
+    lo, hi, best = 0, len(text), _tool_hint_to_telegram_blockquote(_REASONING_ELISION_MARKER)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        # `text[len(text) - mid:]`, not `text[-mid:]`: at mid == 0 the latter
+        # is `text[0:]`, i.e. the whole string, which inverts the search.
+        tail = text[len(text) - mid:]
+        candidate = _tool_hint_to_telegram_blockquote(_REASONING_ELISION_MARKER + tail)
+        if len(candidate) <= max_html_len:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
 def _strip_md(s: str) -> str:
     """Strip markdown inline formatting from text."""
     s = re.sub(r'\*\*(.+?)\*\*', r'\1', s)
@@ -1174,7 +1213,7 @@ class TelegramChannel(BaseChannel):
         if msg.content and msg.content != "[empty message]":
             is_tool_hint = bool(progress_event and progress_event.tool_hint)
             is_perf_hint = bool(progress_event and progress_event.perf_hint)
-            render_as_blockquote = is_tool_hint
+            render_as_blockquote = is_tool_hint or is_perf_hint
 
             # Handle consolidated tool hints: numbered sliding-window buffer
             # edited in place instead of posting a new message per tool call.
@@ -1685,7 +1724,7 @@ class TelegramChannel(BaseChannel):
         if buf.message_id is not None and (now - buf.last_edit) < self.config.stream_edit_interval:
             return  # Buffered; will be flushed by a later delta or send_reasoning_end.
 
-        html = _tool_hint_to_telegram_blockquote(buf.text)
+        html = _reasoning_to_telegram_blockquote(buf.text)
         try:
             if buf.message_id is None:
                 msg = await self._call_with_retry(
@@ -1729,7 +1768,7 @@ class TelegramChannel(BaseChannel):
         buf = self._reasoning_bufs.pop(chat_id, None)
         if not buf or buf.message_id is None or not self._app:
             return
-        html = _tool_hint_to_telegram_blockquote(buf.text)
+        html = _reasoning_to_telegram_blockquote(buf.text)
         try:
             await self._call_with_retry(
                 self._app.bot.edit_message_text,

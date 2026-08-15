@@ -64,9 +64,14 @@ class DispatchToAgentTool(Tool):
 
     @staticmethod
     def _load_nats_config() -> NatsConfig:
-        from nanobot.config.loader import load_config
+        from nanobot.config.loader import load_config, resolve_config_env_vars
 
-        config = load_config()
+        # load_config() alone leaves ``${VAR}`` placeholders unresolved — that
+        # substitution only happens when a caller explicitly asks for it (the
+        # channel manager does this for enabled channels before constructing
+        # them). Tools reading config directly must do the same, or secrets
+        # like the NATS token get passed through as the literal "${...}" text.
+        config = resolve_config_env_vars(load_config())
         raw = getattr(config.channels, "nats", None)
         return NatsConfig.model_validate(raw or {})
 
@@ -87,10 +92,17 @@ class DispatchToAgentTool(Tool):
 
         async with self._connect_lock:
             if self._nc is None or self._nc.is_closed:
+                token = self._config.token
+                logger.info(
+                    "dispatch_to_agent connecting: servers={} token_len={} token_prefix={!r}",
+                    self._config.servers, len(token), token[:4],
+                )
                 self._nc = await nats.connect(
                     servers=self._config.servers,
-                    token=self._config.token or None,
+                    token=token or None,
                     name=f"nanobot-{self._bot_name}-dispatch",
+                    allow_reconnect=False,
+                    connect_timeout=5,
                 )
             return self._nc
 

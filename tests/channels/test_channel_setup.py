@@ -23,6 +23,7 @@ EXPECTED_CHANNELS = {
     "mochat",
     "msteams",
     "napcat",
+    "nats",
     "qq",
     "signal",
     "slack",
