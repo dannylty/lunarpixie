@@ -374,6 +374,7 @@ class TestCmdClearUnifiedSession:
 
         loop = SimpleNamespace(
             sessions=sessions,
+            context=SimpleNamespace(memory=SimpleNamespace(purge_session_history=MagicMock())),
             consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
             _cancel_active_tasks=AsyncMock(return_value=0),
             llm_runtime=MagicMock(return_value=MagicMock()),
@@ -410,6 +411,7 @@ class TestCmdClearUnifiedSession:
 
         loop = SimpleNamespace(
             sessions=sessions,
+            context=SimpleNamespace(memory=SimpleNamespace(purge_session_history=MagicMock())),
             consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
             _cancel_active_tasks=AsyncMock(return_value=0),
             schedule_background=lambda coro: asyncio.ensure_future(coro),

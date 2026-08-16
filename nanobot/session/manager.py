@@ -9,6 +9,7 @@ import re
 import secrets
 import shutil
 import stat
+import uuid
 from collections import OrderedDict
 from contextlib import contextmanager, suppress
 from copy import deepcopy
@@ -1661,6 +1662,66 @@ class SessionManager:
         self._overflow_cache: WeakValueDictionary[str, Session] = WeakValueDictionary()
         self._max_cached_sessions = SESSION_CACHE_MAX_SIZE
         self._delete_observer: Callable[[str], None] | None = None
+        # /clear rotation aliases: retired session key -> key of the fresh
+        # session that replaced it.  get_or_create()/invalidate() resolve
+        # through this chain so routed traffic (which always derives the
+        # original channel:chat_id key) lands on the current episode's session.
+        self._aliases: dict[str, str] = self._load_key_aliases()
+
+    @property
+    def _aliases_file(self) -> Path:
+        return self.sessions_dir / ".aliases.json"
+
+    def _load_key_aliases(self) -> dict[str, str]:
+        try:
+            raw: object = json.loads(self._aliases_file.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(raw, dict):
+            logger.warning(
+                "Session key alias file {} is malformed; ignoring it", self._aliases_file
+            )
+            return {}
+        return {
+            k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)
+        }
+
+    def _save_key_aliases(self) -> None:
+        self._aliases_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._aliases_file.with_name(self._aliases_file.name + ".tmp")
+        tmp.write_text(
+            json.dumps(self._aliases, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(tmp, self._aliases_file)
+
+    def resolve_key(self, key: str) -> str:
+        """Follow the /clear rotation chain to the current session key."""
+        resolved = key
+        for _ in range(16):
+            nxt = self._aliases.get(resolved)
+            if not nxt or nxt == resolved:
+                break
+            resolved = nxt
+        return resolved
+
+    def rotate_session_key(self, key: str) -> str:
+        """Start a fresh session: point *key* at a newly generated session key.
+
+        The retired key is kept as an alias so traffic that still derives it
+        (channel routing, cron origins) resolves to the new session.  Returns
+        the new key.
+        """
+        resolved = self.resolve_key(key)
+        for _ in range(8):
+            new_key = f"{resolved}:{uuid.uuid4().hex[:8]}"
+            if new_key not in self._aliases and new_key not in self._aliases.values():
+                break
+        else:
+            raise RuntimeError(f"could not allocate a fresh session key for {resolved}")
+        self._aliases[resolved] = new_key
+        self._save_key_aliases()
+        logger.info("Session {} rotated to {}", resolved, new_key)
+        return new_key
 
     def _remember(self, session: Session) -> None:
         """Keep recent sessions strongly cached without duplicating live objects."""
@@ -1747,6 +1808,7 @@ class SessionManager:
         Returns:
             The session.
         """
+        key = self.resolve_key(key)
         session = self._cached(key)
         if session is not None:
             return session
@@ -1863,7 +1925,8 @@ class SessionManager:
         return flushed
 
     def invalidate(self, key: str) -> None:
-        """Remove a session from the in-memory cache."""
+        """Remove a session from the in-memory cache (resolving rotation aliases)."""
+        key = self.resolve_key(key)
         self._cache.pop(key, None)
         self._overflow_cache.pop(key, None)
 

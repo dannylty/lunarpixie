@@ -428,6 +428,23 @@ class MemoryStore:
             )
         self._write_entries(kept)
 
+    def purge_session_history(self, session_key: str) -> int:
+        """Delete every history.jsonl entry for *session_key*.
+
+        Used by /clear so a discarded conversation is not re-injected through
+        the Recent History section or consumed by Dream — including entries a
+        token-budget compaction already wrote.  The monotonic cursor counter
+        is intentionally left untouched.  Returns the number of entries removed.
+        """
+        entries = self._read_entries()
+        kept = [e for e in entries if e.get("session_key") != session_key]
+        if len(kept) == len(entries):
+            return 0
+        self._write_entries(kept)
+        removed = len(entries) - len(kept)
+        logger.info("Purged {} history entries for session {}", removed, session_key)
+        return removed
+
     # -- JSONL helpers -------------------------------------------------------
 
     def _read_entries(self) -> list[dict[str, Any]]:
