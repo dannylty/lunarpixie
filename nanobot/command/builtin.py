@@ -376,13 +376,15 @@ async def cmd_compact(ctx: CommandContext) -> None:
 async def cmd_clear(ctx: CommandContext) -> OutboundMessage:
     """Stop active task, discard the conversation, and start a fresh session.
 
-    The session key is rotated so subsequent messages in this chat get a
-    brand-new session, and every memory (history.jsonl) entry of the
-    discarded session is purged — so even content a token-budget compaction
-    already wrote out is gone.  Unlike /new, this never archives/consolidates
-    the discarded messages — it's for throwing away a conversation you don't
-    want summarized into memory at all (e.g. an experiment, a wrong turn,
-    something sensitive), not for normal context-window management.
+    The session key is deliberately NOT rotated: it carries per-session runtime
+    state (notably the /model preset in ``_nanobot_model_preset``), and
+    ``Session.clear()`` already drops the messages and ``_last_summary``.  Every
+    memory (history.jsonl) entry of the discarded session is purged - so even
+    content a token-budget compaction already wrote out is gone.  Unlike /new,
+    this never archives/consolidates the discarded messages - it is for throwing
+    away a conversation you do not want summarized into memory at all (e.g. an
+    experiment, a wrong turn, something sensitive), not for normal
+    context-window management.
     """
     loop = ctx.loop
     await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
@@ -391,8 +393,6 @@ async def cmd_clear(ctx: CommandContext) -> OutboundMessage:
     session.clear()
     loop.sessions.save(session)
     loop.sessions.invalidate(session.key)
-    new_key = loop.sessions.rotate_session_key(session.key)
-    loop.sessions.get_or_create(new_key)
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
         content="Conversation cleared.",

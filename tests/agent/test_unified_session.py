@@ -28,7 +28,8 @@ from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.config.schema import AgentDefaults, Config
 from nanobot.providers.base import GenerationSettings
 from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.session.manager import SessionManager
+from nanobot.session.manager import Session, SessionManager
+from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
@@ -428,6 +429,47 @@ class TestCmdClearUnifiedSession:
         sessions.invalidate("discord:999")
         assert sessions.get_or_create("unified:default").messages == []
         assert len(sessions.get_or_create("discord:999").messages) == 1
+
+    @pytest.mark.asyncio
+    async def test_cmd_clear_keeps_session_key_and_runtime_metadata(self, tmp_path: Path):
+        """/clear must not rotate the session key.
+
+        The key carries per-session runtime state — notably the /model preset in
+        ``_nanobot_model_preset`` — so rotating it silently reset the model
+        selection on every clear.  Clearing drops messages and ``_last_summary``
+        but leaves the key and the rest of the metadata intact.
+        """
+        sessions = SessionManager(tmp_path)
+
+        session = sessions.get_or_create("telegram:111")
+        session.add_message("user", "hello")
+        session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "qwen_low"
+        session.metadata["_last_summary"] = {"text": "old summary", "last_active": "2026-01-01T00:00:00"}
+        sessions.save(session)
+
+        loop = SimpleNamespace(
+            sessions=sessions,
+            context=SimpleNamespace(memory=SimpleNamespace(purge_session_history=MagicMock())),
+            consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
+            _cancel_active_tasks=AsyncMock(return_value=0),
+            schedule_background=lambda coro: asyncio.ensure_future(coro),
+        )
+
+        msg = InboundMessage(
+            channel="telegram", sender_id="user1", chat_id="111", content="/clear",
+        )
+        ctx = CommandContext(msg=msg, session=None, key="telegram:111", raw="/clear", loop=loop)
+        await cmd_clear(ctx)
+
+        # The routed key still resolves to itself: no rotation alias was created.
+        assert sessions.resolve_key("telegram:111") == "telegram:111"
+
+        sessions.invalidate("telegram:111")
+        reloaded = sessions.get_or_create("telegram:111")
+        assert reloaded.key == "telegram:111"
+        assert reloaded.messages == []
+        assert reloaded.metadata.get(SESSION_MODEL_PRESET_METADATA_KEY) == "qwen_low"
+        assert "_last_summary" not in reloaded.metadata
 
 
 # ---------------------------------------------------------------------------
