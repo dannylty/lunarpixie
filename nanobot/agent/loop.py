@@ -70,6 +70,7 @@ from nanobot.runtime_context import (
     append_runtime_context,
     resolve_runtime_context,
     runtime_context_blocks_from_metadata,
+    wrap_runtime_context_lines,
 )
 from nanobot.security.workspace_access import (
     WorkspaceScopeResolver,
@@ -102,6 +103,7 @@ from nanobot.session.summary import (
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
 from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
+from nanobot.utils.helpers import current_time_str
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
@@ -396,6 +398,10 @@ class AgentLoop:
         self._unified_session = unified_session
         self._running = False
         self._runtime_context_providers: list[RuntimeContextProvider] = []
+        # Built-in per-turn clock: without a fresh "now" in context, date
+        # answers anchor to stale dates in workspace docs and the model
+        # has to guess (regression from the pre-rewrite Current Time block).
+        self._runtime_context_providers.append(self._current_time_provider)
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._discarding_sessions: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -655,6 +661,22 @@ class AgentLoop:
 
         return _unsubscribe
 
+    async def _current_time_provider(
+        self, request: RequestContext
+    ) -> RuntimeContextBlock | None:
+        """Built-in current date/time block, re-resolved on every user turn."""
+        try:
+            now = current_time_str(self.context.timezone)
+        except Exception:
+            now = current_time_str(None)
+        return RuntimeContextBlock(
+            source="current_time",
+            content=wrap_runtime_context_lines(
+                [f"Current date/time: {now}"],
+            ),
+            ephemeral=True,
+        )
+
     async def submit_cron_turn(self, msg: InboundMessage) -> OutboundMessage | None:
         return await self._cron_turns.submit(msg)
 
@@ -694,7 +716,16 @@ class AgentLoop:
         ]
         content_value = cast(object, msg.content)
         has_text = isinstance(content_value, str) and content_value.strip()
-        if has_text or media_paths or runtime_context_blocks:
+        # Ephemeral blocks (e.g. the per-turn clock) are sent to the model but
+        # kept out of history so persisted user messages stay exactly what the
+        # user sent. They must not, on their own, make a contentless turn
+        # persist a blank user message either.
+        persist_blocks = [
+            block
+            for block in (runtime_context_blocks or ())
+            if not block.ephemeral
+        ]
+        if has_text or media_paths or persist_blocks:
             extra: dict[str, Any] = ({"media": list(media_paths)} if media_paths else {}) | agent_context.session_extra(msg.metadata)
             extra.update(kwargs)
             text = content_value if isinstance(content_value, str) else ""
@@ -704,7 +735,7 @@ class AgentLoop:
             extra.update(automation_extra)
             text, runtime_context_meta = append_runtime_context(
                 text,
-                runtime_context_blocks or (),
+                persist_blocks,
             )
             if runtime_context_meta is not None:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta

@@ -13,6 +13,7 @@ from nanobot.runtime_context import (
     WEBUI_QUOTE_SOURCE,
     RuntimeContextBlock,
     append_runtime_context,
+    normalize_runtime_context_blocks,
     normalize_webui_quote,
     public_history_message,
     resolve_runtime_context,
@@ -151,6 +152,82 @@ def test_sdk_snapshot_hides_runtime_context() -> None:
     snapshot = snapshot_from_session(session)
 
     assert snapshot.messages == [{"role": "user", "content": "visible user text"}]
+
+
+@pytest.mark.asyncio
+async def test_loop_registers_fresh_current_time_provider(tmp_path: object) -> None:
+    """The built-in clock provider must be registered and report the real now.
+
+    Regression guard: without a fresh current date/time in context, date
+    answers anchor to stale dates in workspace docs (the "it says today is
+    21 July" bug).
+    """
+    from datetime import datetime, timezone as tz
+
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.queue import MessageBus
+    from nanobot.providers.base import GenerationSettings
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+
+    with (
+        patch("nanobot.agent.loop.SessionManager"),
+        patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr,
+    ):
+        mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
+        loop = AgentLoop(
+            bus=MessageBus(),
+            provider=provider,
+            workspace=tmp_path,
+            timezone="UTC",
+        )
+
+    assert loop._current_time_provider in loop._runtime_context_providers
+
+    block = await loop._current_time_provider(
+        RequestContext(channel="cli", chat_id="direct")
+    )
+    assert block is not None
+    assert block.source == "current_time"
+    assert block.content.startswith("[Runtime Context")
+    assert "do not treat" not in block.content
+    today = datetime.now(tz.utc).strftime("%Y-%m-%d")
+    assert f"Current date/time: {today}" in block.content
+
+
+@pytest.mark.asyncio
+async def test_resolve_runtime_context_preserves_ephemeral_flag() -> None:
+    """normalize_runtime_context_blocks must not drop ``ephemeral``.
+
+    Regression guard: it rebuilds every block, so omitting ``ephemeral``
+    silently reset it to False and the per-turn clock leaked into persisted
+    history on every user turn.
+    """
+
+    async def provider(request: RequestContext) -> RuntimeContextBlock:
+        return RuntimeContextBlock(
+            source="current_time",
+            content="Current date/time: whenever",
+            ephemeral=True,
+        )
+
+    blocks = await resolve_runtime_context(
+        [provider],
+        RequestContext(channel="cli", chat_id="direct"),
+    )
+
+    assert [block.ephemeral for block in blocks] == [True]
+
+
+def test_normalize_defaults_ephemeral_to_false() -> None:
+    blocks = normalize_runtime_context_blocks(
+        RuntimeContextBlock(source="goal", content="persisted goal")
+    )
+    assert [block.ephemeral for block in blocks] == [False]
 
 
 def test_webui_preview_title_and_backfill_hide_runtime_context() -> None:

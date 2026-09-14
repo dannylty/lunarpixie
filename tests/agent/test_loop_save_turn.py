@@ -158,6 +158,64 @@ def test_agent_loop_llm_runtime_reflects_current_provider_and_model(tmp_path: Pa
     assert runtime.model == "next-model"
 
 
+def test_persist_skips_ephemeral_runtime_context_blocks(tmp_path: Path) -> None:
+    """Ephemeral blocks reach the model but never land in persisted history."""
+    loop = _make_full_loop(tmp_path)
+    session = loop.sessions.get_or_create("websocket:auto")
+
+    persisted = loop._persist_user_message_early(
+        InboundMessage(
+            channel="websocket",
+            sender_id="user",
+            chat_id="auto",
+            content="what day is it",
+        ),
+        session,
+        runtime_context_blocks=[
+            RuntimeContextBlock(
+                source="current_time",
+                content="Current date/time: whenever",
+                ephemeral=True,
+            ),
+            RuntimeContextBlock(source="goal", content="durable goal"),
+        ],
+    )
+
+    assert persisted is True
+    message = session.messages[-1]
+    assert "Current date/time" not in message["content"]
+    assert "durable goal" in message["content"]
+    assert message[RUNTIME_CONTEXT_HISTORY_META]["sources"] == ["goal"]
+
+
+def test_ephemeral_only_context_does_not_persist_blank_user_message(
+    tmp_path: Path,
+) -> None:
+    """The always-on clock must not make a contentless turn persist an empty message."""
+    loop = _make_full_loop(tmp_path)
+    session = loop.sessions.get_or_create("websocket:auto")
+
+    persisted = loop._persist_user_message_early(
+        InboundMessage(
+            channel="websocket",
+            sender_id="user",
+            chat_id="auto",
+            content="",
+        ),
+        session,
+        runtime_context_blocks=[
+            RuntimeContextBlock(
+                source="current_time",
+                content="Current date/time: whenever",
+                ephemeral=True,
+            )
+        ],
+    )
+
+    assert persisted is False
+    assert session.messages == []
+
+
 def test_persist_cron_turn_uses_distinct_history_marker(tmp_path: Path) -> None:
     loop = _make_full_loop(tmp_path)
     session = loop.sessions.get_or_create("websocket:auto")
