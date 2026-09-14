@@ -284,6 +284,7 @@ class AgentLoop:
         hooks: list[AgentHook] | None = None,
         hook_factories: list[AgentTurnHookFactory] | None = None,
         unified_session: bool = False,
+        inject_current_time: bool = False,
         disabled_skills: list[str] | None = None,
         tools_config: ToolsConfig | None = None,
         image_generation_provider_config: ProviderConfig | None = None,
@@ -398,10 +399,11 @@ class AgentLoop:
         self._unified_session = unified_session
         self._running = False
         self._runtime_context_providers: list[RuntimeContextProvider] = []
-        # Built-in per-turn clock: without a fresh "now" in context, date
-        # answers anchor to stale dates in workspace docs and the model
-        # has to guess (regression from the pre-rewrite Current Time block).
-        self._runtime_context_providers.append(self._current_time_provider)
+        # Built-in per-turn clock. Off by default so the persisted prompt
+        # prefix stays byte-identical to upstream's; agents that answer date
+        # questions turn it on with agents.defaults.injectCurrentTime.
+        if inject_current_time:
+            self._runtime_context_providers.append(self._current_time_provider)
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._discarding_sessions: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -513,6 +515,7 @@ class AgentLoop:
             channels_config=config.channels,
             timezone=defaults.timezone,
             unified_session=defaults.unified_session,
+            inject_current_time=defaults.inject_current_time,
             disabled_skills=defaults.disabled_skills,
             session_ttl_minutes=defaults.session_ttl_minutes,
             idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
@@ -674,7 +677,6 @@ class AgentLoop:
             content=wrap_runtime_context_lines(
                 [f"Current date/time: {now}"],
             ),
-            ephemeral=True,
         )
 
     async def submit_cron_turn(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -716,16 +718,7 @@ class AgentLoop:
         ]
         content_value = cast(object, msg.content)
         has_text = isinstance(content_value, str) and content_value.strip()
-        # Ephemeral blocks (e.g. the per-turn clock) are sent to the model but
-        # kept out of history so persisted user messages stay exactly what the
-        # user sent. They must not, on their own, make a contentless turn
-        # persist a blank user message either.
-        persist_blocks = [
-            block
-            for block in (runtime_context_blocks or ())
-            if not block.ephemeral
-        ]
-        if has_text or media_paths or persist_blocks:
+        if has_text or media_paths or runtime_context_blocks:
             extra: dict[str, Any] = ({"media": list(media_paths)} if media_paths else {}) | agent_context.session_extra(msg.metadata)
             extra.update(kwargs)
             text = content_value if isinstance(content_value, str) else ""
@@ -735,7 +728,7 @@ class AgentLoop:
             extra.update(automation_extra)
             text, runtime_context_meta = append_runtime_context(
                 text,
-                persist_blocks,
+                runtime_context_blocks or (),
             )
             if runtime_context_meta is not None:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta

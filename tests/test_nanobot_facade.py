@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch, call
 
 import pytest
 
@@ -172,7 +172,10 @@ def test_from_config_default_path():
         mock_prov.return_value.get_default_model.return_value = "test"
         mock_prov.return_value.generation.max_tokens = 4096
         Nanobot.from_config()
-        mock_load.assert_called_once_with(None)
+        # Fork: dispatch_to_agent's enabled() check reads the full config during
+        # tool-registry construction, so load_config runs more than once. What
+        # matters is that the explicit path argument is still honoured.
+        assert mock_load.call_args_list[0] == call(None)
 
 
 @pytest.mark.asyncio

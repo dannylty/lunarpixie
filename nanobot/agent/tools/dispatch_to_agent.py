@@ -42,9 +42,9 @@ _PARAMETERS = tool_parameters_schema(
 class DispatchToAgentTool(Tool):
     """Publish a routed task envelope to a specialist agent over NATS."""
 
-    def __init__(self, nats_config: NatsConfig, *, bot_name: str = "coordinator"):
+    def __init__(self, nats_config: NatsConfig, *, bot_name: str | None = None):
         self._config = nats_config
-        self._bot_name = bot_name
+        self._bot_name_override = bot_name
         self._nc: Any = None
         self._connect_lock = asyncio.Lock()
 
@@ -81,11 +81,18 @@ class DispatchToAgentTool(Tool):
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
+        # bot_name is resolved lazily: loading the full config here would add a
+        # second load_config() call during tool-registry construction.
+        return cls(cls._load_nats_config())
+
+    @property
+    def _bot_name(self) -> str:
+        if self._bot_name_override is not None:
+            return self._bot_name_override
         from nanobot.config.loader import load_config
 
-        nats_config = cls._load_nats_config()
-        bot_name = load_config().agents.defaults.bot_name or "coordinator"
-        return cls(nats_config, bot_name=bot_name)
+        self._bot_name_override = load_config().agents.defaults.bot_name or "coordinator"
+        return self._bot_name_override
 
     async def _connection(self) -> Any:
         import nats  # deferred: only required when dispatch_to_agent is enabled

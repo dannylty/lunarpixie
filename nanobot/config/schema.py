@@ -132,13 +132,18 @@ class AgentDefaults(Base):
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     tool_hint_max_length: int = Field(
-        default=500,
+        default=40,
         ge=20,
         le=500,
         validation_alias=AliasChoices("toolHintMaxLength"),
         serialization_alias="toolHintMaxLength",
     )  # Max characters for tool hint display (e.g. "$ cd …/project && npm test")
     reasoning_effort: str | None = None  # low / medium / high / xhigh / max / adaptive / none — LLM thinking effort; None preserves the provider default
+    inject_current_time: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("injectCurrentTime"),
+        serialization_alias="injectCurrentTime",
+    )  # Prepend a per-turn "Current date/time" runtime-context block
     timezone: str = "UTC"  # Effective IANA timezone, e.g. "Asia/Shanghai"
     timezone_mode: Literal["auto", "manual"] = "auto"
     bot_name: str = "nanobot"  # Display name shown in CLI prompts (e.g. "{name} is thinking...")

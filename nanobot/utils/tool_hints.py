@@ -34,7 +34,7 @@ _PATH_IN_CMD_RE = re.compile(
 ToolFormat = tuple[list[str], str, bool, bool]
 
 
-def format_tool_hints(tool_calls: list[ToolCallRequest], max_length: int = 500) -> str:
+def format_tool_hints(tool_calls: list[ToolCallRequest], max_length: int = 40) -> str:
     """Format tool calls as concise hints with smart abbreviation."""
     if not tool_calls:
         return ""
@@ -93,7 +93,7 @@ def _extract_arg(tc: ToolCallRequest, key_args: list[str]) -> str | None:
     return None
 
 
-def _fmt_known(tc: ToolCallRequest, fmt: ToolFormat, max_length: int = 500) -> str:
+def _fmt_known(tc: ToolCallRequest, fmt: ToolFormat, max_length: int = 40) -> str:
     """Format a registered tool using its template."""
     if not fmt[0] and "{}" not in fmt[1]:
         return fmt[1]
@@ -128,7 +128,7 @@ def _abbreviate_command(cmd: str, max_len: int = 40) -> str:
     return abbreviated[:max_len - 1] + "\u2026"
 
 
-def _fmt_mcp(tc: ToolCallRequest, max_length: int = 500) -> str:
+def _fmt_mcp(tc: ToolCallRequest, max_length: int = 40) -> str:
     """Format MCP tool as server::tool."""
     name = tc.name
     if "__" in name:
@@ -149,7 +149,7 @@ def _fmt_mcp(tc: ToolCallRequest, max_length: int = 500) -> str:
     return f'{server}::{tool}("{abbreviate_path(val, max_length)}")'
 
 
-def _fmt_fallback(tc: ToolCallRequest, max_length: int = 500) -> str:
+def _fmt_fallback(tc: ToolCallRequest, max_length: int = 40) -> str:
     """Original formatting logic for unregistered tools."""
     args = _get_args(tc)
     val = next(iter(args.values()), None)

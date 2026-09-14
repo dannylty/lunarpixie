@@ -81,8 +81,9 @@ class TestHistoryEntriesUseResolvedSessionKey:
         loop = SimpleNamespace(
             sessions=sessions,
             context=SimpleNamespace(memory=SimpleNamespace(purge_session_history=MagicMock())),
-            consolidator=SimpleNamespace(archive=archive),
+            consolidator=SimpleNamespace(archive_session=archive),
             _cancel_active_tasks=AsyncMock(return_value=0),
+            discard_session_file_state=MagicMock(),
             runtime_for_session=MagicMock(return_value=MagicMock()),
             llm_runtime=MagicMock(return_value=MagicMock()),
             schedule_background=lambda coro: asyncio.ensure_future(coro),
@@ -96,4 +97,6 @@ class TestHistoryEntriesUseResolvedSessionKey:
         await asyncio.sleep(0)  # let the scheduled archive coroutine run
 
         archive.assert_awaited_once()
-        assert archive.await_args.kwargs["session_key"] == resolved
+        # cmd_new now hands archive_session a Session snapshot rather than a
+        # session_key kwarg, so the resolved key travels on the object itself.
+        assert archive.await_args.args[0].key == resolved

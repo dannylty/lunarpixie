@@ -30,9 +30,6 @@ class RuntimeContextBlock:
 
     source: str
     content: str
-    # Ephemeral blocks are sent to the model with the current request but
-    # never persisted into history (they are recomputed fresh each turn).
-    ephemeral: bool = False
 
 
 def normalize_webui_quote(value: Any) -> str | None:
@@ -95,13 +92,7 @@ def normalize_runtime_context_blocks(result: RuntimeContextResult) -> list[Runti
         if not source:
             raise ValueError("runtime context block source must not be empty")
         if content:
-            blocks.append(
-                RuntimeContextBlock(
-                    source=source,
-                    content=content,
-                    ephemeral=block.ephemeral,
-                )
-            )
+            blocks.append(RuntimeContextBlock(source=source, content=content))
     return blocks
 
 

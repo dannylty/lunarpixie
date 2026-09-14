@@ -3368,7 +3368,7 @@ async def test_tool_hint_consolidation_edits_single_message() -> None:
         ),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
     channel._app.bot.edit_message_text = AsyncMock()
 
     for hint in ("read_file(\"a.py\")", "grep(\"foo\")", "exec(\"ls && pwd\")"):
@@ -3400,7 +3400,7 @@ async def test_tool_hint_consolidation_sliding_window() -> None:
         ),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
     channel._app.bot.edit_message_text = AsyncMock()
 
     for i in range(4):
@@ -3428,7 +3428,7 @@ async def test_tool_hint_consolidation_finalizes_on_final_reply() -> None:
         ),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
     channel._app.bot.edit_message_text = AsyncMock()
 
     await channel.send(
@@ -3464,7 +3464,7 @@ async def test_tool_hint_consolidation_not_finalized_by_perf_hint() -> None:
         ),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
     channel._app.bot.edit_message_text = AsyncMock()
 
     await channel.send(
@@ -3506,7 +3506,7 @@ async def test_perf_hint_rendered_as_blockquote_without_consolidation() -> None:
         TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
 
     await channel.send(
         OutboundMessage(
@@ -3528,7 +3528,7 @@ async def test_tool_hint_consolidation_disabled_by_default_sends_each_hint_separ
         TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
 
     for hint in ("read_file(\"a.py\")", "grep(\"foo\")"):
         await channel.send(
@@ -3552,7 +3552,7 @@ async def test_send_delta_stream_end_finalizes_tool_hint_when_not_resuming() -> 
         ),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
     channel._app.bot.edit_message_text = AsyncMock()
 
     await channel.send(
@@ -3577,7 +3577,7 @@ async def test_send_delta_stream_end_does_not_finalize_tool_hint_when_resuming()
         ),
         MessageBus(),
     )
-    channel._app = _FakeApp(lambda: None)
+    _install_ready_app(channel)
     channel._app.bot.edit_message_text = AsyncMock()
 
     await channel.send(

@@ -28,7 +28,7 @@ class AgentProgressHook(AgentHook):
         *,
         streaming: bool = False,
         session_key: str | None = None,
-        tool_hint_max_length: int = 500,
+        tool_hint_max_length: int = 40,
     ) -> None:
         super().__init__(reraise=True)
         self._publish = events.publish
@@ -177,14 +177,9 @@ class AgentProgressHook(AgentHook):
             u.source if u else "missing",
         )
 
-        if self._on_progress:
-            perf_hint = self._format_perf_hint(context)
-            if perf_hint:
-                await invoke_on_progress(
-                    self._on_progress,
-                    perf_hint,
-                    perf_hint=True,
-                )
+        perf_hint = self._format_perf_hint(context)
+        if perf_hint:
+            await self._publish(ProgressEvent(content=perf_hint, perf_hint=True))
 
     @staticmethod
     def _format_perf_hint(context: AgentHookContext) -> str:

@@ -169,7 +169,7 @@ async def test_runner_measures_stream_generation_without_time_to_first_token():
 
     with patch(
         "nanobot.agent.runner.time.perf_counter",
-        side_effect=[10.0, 10.2, 10.4, 10.8],
+        side_effect=[10.0, 10.2, 10.4, 10.8, 11.0],  # 5th: response_time_s (fork)
     ):
         result = await AgentRunner().run(make_run_spec(
             provider,

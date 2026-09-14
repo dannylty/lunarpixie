@@ -184,6 +184,7 @@ async def test_loop_registers_fresh_current_time_provider(tmp_path: object) -> N
             provider=provider,
             workspace=tmp_path,
             timezone="UTC",
+            inject_current_time=True,
         )
 
     assert loop._current_time_provider in loop._runtime_context_providers
@@ -197,37 +198,6 @@ async def test_loop_registers_fresh_current_time_provider(tmp_path: object) -> N
     assert "do not treat" not in block.content
     today = datetime.now(tz.utc).strftime("%Y-%m-%d")
     assert f"Current date/time: {today}" in block.content
-
-
-@pytest.mark.asyncio
-async def test_resolve_runtime_context_preserves_ephemeral_flag() -> None:
-    """normalize_runtime_context_blocks must not drop ``ephemeral``.
-
-    Regression guard: it rebuilds every block, so omitting ``ephemeral``
-    silently reset it to False and the per-turn clock leaked into persisted
-    history on every user turn.
-    """
-
-    async def provider(request: RequestContext) -> RuntimeContextBlock:
-        return RuntimeContextBlock(
-            source="current_time",
-            content="Current date/time: whenever",
-            ephemeral=True,
-        )
-
-    blocks = await resolve_runtime_context(
-        [provider],
-        RequestContext(channel="cli", chat_id="direct"),
-    )
-
-    assert [block.ephemeral for block in blocks] == [True]
-
-
-def test_normalize_defaults_ephemeral_to_false() -> None:
-    blocks = normalize_runtime_context_blocks(
-        RuntimeContextBlock(source="goal", content="persisted goal")
-    )
-    assert [block.ephemeral for block in blocks] == [False]
 
 
 def test_webui_preview_title_and_backfill_hide_runtime_context() -> None:
