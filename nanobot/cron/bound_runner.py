@@ -12,6 +12,7 @@ from nanobot.agent.tools.cron import CronTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.cron.session_delivery import origin_delivery_context
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
+from nanobot.utils.helpers import current_time_str
 from nanobot.cron.types import CronJob, CronRunResult
 from nanobot.cron.webui_metadata import cron_proactive_delivery_metadata
 from nanobot.utils.prompt_templates import render_template
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 class BoundCronAgent(Protocol):
     tools: ToolRegistry
+    timezone: str
 
     async def submit_cron_turn(self, msg: InboundMessage) -> OutboundMessage | None:
         ...
@@ -73,12 +75,22 @@ async def run_bound_cron_job(
     if not session_key:
         raise ValueError(f"cron job {job.id} is missing payload.session_key")
 
+    # prompt_ref must keep identifying the *template*, so hash the render with
+    # a fixed placeholder; only the prompt actually sent carries the real clock.
+    prompt_ref = _cron_prompt_ref(
+        render_template(
+            "agent/cron_reminder.md",
+            strip=True,
+            message=job.payload.message,
+            current_time="<current_time>",
+        )
+    )
     prompt = render_template(
         "agent/cron_reminder.md",
         strip=True,
         message=job.payload.message,
+        current_time=current_time_str(getattr(agent, "timezone", None) or "UTC"),
     )
-    prompt_ref = _cron_prompt_ref(prompt)
     run_id = f"{job.id}:{int(time.time() * 1000)}:{uuid.uuid4().hex[:8]}"
     channel, chat_id, metadata = _bound_session_delivery_context(
         job,

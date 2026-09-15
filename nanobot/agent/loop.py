@@ -664,6 +664,11 @@ class AgentLoop:
 
         return _unsubscribe
 
+    @property
+    def timezone(self) -> str:
+        """Effective IANA timezone, for callers like the cron bound runner."""
+        return self.context.timezone or "UTC"
+
     async def _current_time_provider(
         self, request: RequestContext
     ) -> RuntimeContextBlock | None:
